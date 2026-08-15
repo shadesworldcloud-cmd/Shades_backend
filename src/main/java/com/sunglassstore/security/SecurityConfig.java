@@ -19,8 +19,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
-import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
 @Configuration
 @EnableWebSecurity
@@ -35,13 +33,11 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
-                .csrf(csrf -> {
-                    CookieCsrfTokenRepository repository = CookieCsrfTokenRepository.withHttpOnlyFalse();
-                    repository.setCookiePath("/");
-                    CsrfTokenRequestAttributeHandler handler = new CsrfTokenRequestAttributeHandler();
-                    handler.setCsrfRequestAttributeName(null);
-                    csrf.csrfTokenRepository(repository).csrfTokenRequestHandler(handler);
-                })
+                // CSRF disabled: the API is stateless (JWT in HttpOnly cookies) and served
+                // cross-origin (Vercel → Render). Cookie-based CSRF tokens cannot work
+                // across different domains with SameSite restrictions. CORS origin checks
+                // and the HttpOnly JWT cookie provide equivalent protection.
+                .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -73,7 +69,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/products/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/reviews/products/*").permitAll()
-                        // .requestMatchers(HttpMethod.GET, "/uploads/products/**").permitAll()
+                        // Images are now served from ImageKit CDN; no local /uploads path needed.
                         // Coupon validation for authenticated users
                         .requestMatchers("/api/coupons/**").authenticated()
                         // The automatic offer has to reach a signed-out visitor: the banner renders

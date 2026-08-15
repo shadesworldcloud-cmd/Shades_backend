@@ -37,7 +37,11 @@ public class AuthCookieService {
     }
 
     private ResponseCookie cookie(String name, String value, String path, Duration maxAge) {
+        // SameSite=None is required for cross-origin cookies (Vercel frontend → Render backend).
+        // When SameSite=None, Secure must be true (browsers enforce this).
+        // In local dev (secure=false), fall back to Lax so cookies still work on localhost.
+        String sameSite = secure ? "None" : "Lax";
         return ResponseCookie.from(name, value)
-                .httpOnly(true).secure(secure).sameSite("Lax").path(path).maxAge(maxAge).build();
+                .httpOnly(true).secure(secure).sameSite(sameSite).path(path).maxAge(maxAge).build();
     }
 }
