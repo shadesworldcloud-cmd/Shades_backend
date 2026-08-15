@@ -1,0 +1,6 @@
+-- Run once against existing ECOMMERCE_DB installations.
+-- New installations already contain PAIR_FIXED in sql.sql.
+ALTER TABLE COUPONS DROP CHECK CHK_COUPON_TYPE;
+ALTER TABLE COUPONS
+    ADD CONSTRAINT CHK_COUPON_TYPE
+    CHECK (DISCOUNT_TYPE IN ('PERCENTAGE', 'FIXED', 'PAIR_FIXED'));

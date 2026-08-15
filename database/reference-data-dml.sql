@@ -1,0 +1,72 @@
+-- Shades World safe reference/bootstrap DML
+-- Generated from ECOMMERCE_DB on 2026-08-06.
+-- Contains only roles, permissions, mappings, categories, tax rates and application configuration.
+-- Intentionally excludes users, password hashes, tokens, carts, wishlists, orders, payments,
+-- returns, refunds, reviews, notifications, email payloads and audit/login records.
+
+USE ECOMMERCE_DB;
+
+/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
+/*!40103 SET TIME_ZONE='+00:00' */;
+/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;
+/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
+/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
+/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
+
+INSERT  IGNORE INTO `roles` (`ROLE_ID`, `ROLE_NAME`, `DESCRIPTION`) VALUES (1,'CUSTOMER','Regular e-commerce customer');
+INSERT  IGNORE INTO `roles` (`ROLE_ID`, `ROLE_NAME`, `DESCRIPTION`) VALUES (2,'ADMIN','Full system administrator');
+INSERT  IGNORE INTO `roles` (`ROLE_ID`, `ROLE_NAME`, `DESCRIPTION`) VALUES (3,'SUPPORT','Customer support employee');
+INSERT  IGNORE INTO `roles` (`ROLE_ID`, `ROLE_NAME`, `DESCRIPTION`) VALUES (4,'INVENTORY_MANAGER','Manages products and inventory');
+
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (1,'PRODUCT_READ','View products');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (2,'PRODUCT_WRITE','Create and update products');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (3,'PRODUCT_DELETE','Delete products');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (4,'ORDER_CREATE','Place an order');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (5,'ORDER_READ_OWN','View own orders');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (6,'ORDER_READ_ALL','View every order');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (7,'ORDER_UPDATE','Update order status');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (8,'USER_READ','View user details');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (9,'USER_UPDATE','Update user details');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (10,'RETURN_CREATE','Request a return');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (11,'RETURN_MANAGE','Approve or reject returns');
+INSERT  IGNORE INTO `permissions` (`PERMISSION_ID`, `PERMISSION_NAME`, `DESCRIPTION`) VALUES (12,'INVENTORY_MANAGE','Manage inventory');
+
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (1,1);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,1);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (3,1);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (4,1);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,2);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (4,2);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,3);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (1,4);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,4);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (1,5);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,5);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,6);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (3,6);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,7);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (3,7);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,8);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (3,8);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (1,9);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,9);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (1,10);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,10);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,11);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (3,11);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (2,12);
+INSERT  IGNORE INTO `role_permissions` (`ROLE_ID`, `PERMISSION_ID`) VALUES (4,12);
+
+INSERT  IGNORE INTO `categories` (`CATEGORY_ID`, `PARENT_CATEGORY_ID`, `CATEGORY_NAME`, `DESCRIPTION`, `IS_ACTIVE`, `CREATED_AT`) VALUES (1,NULL,'Men','Eyewear designed for men',1,'2026-08-02 19:19:09');
+INSERT  IGNORE INTO `categories` (`CATEGORY_ID`, `PARENT_CATEGORY_ID`, `CATEGORY_NAME`, `DESCRIPTION`, `IS_ACTIVE`, `CREATED_AT`) VALUES (2,NULL,'Women','Eyewear designed for women',1,'2026-08-02 19:19:09');
+INSERT  IGNORE INTO `categories` (`CATEGORY_ID`, `PARENT_CATEGORY_ID`, `CATEGORY_NAME`, `DESCRIPTION`, `IS_ACTIVE`, `CREATED_AT`) VALUES (3,NULL,'Unisex','Eyewear designed for everyone',1,'2026-08-02 19:19:09');
+INSERT  IGNORE INTO `categories` (`CATEGORY_ID`, `PARENT_CATEGORY_ID`, `CATEGORY_NAME`, `DESCRIPTION`, `IS_ACTIVE`, `CREATED_AT`) VALUES (4,NULL,'Accessory','Eyewear accessories and care products',1,'2026-08-02 19:19:09');
+
+
+/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+
+/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
+/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
+/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
+/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
+
