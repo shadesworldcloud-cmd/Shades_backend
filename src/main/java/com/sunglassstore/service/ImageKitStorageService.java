@@ -3,14 +3,15 @@ package com.sunglassstore.service;
 import com.sunglassstore.exception.BadRequestException;
 import io.imagekit.client.ImageKitClient;
 import io.imagekit.client.okhttp.ImageKitOkHttpClient;
-import io.imagekit.models.files.FileDeleteParams;
 import io.imagekit.models.files.FileUploadParams;
 import io.imagekit.models.files.FileUploadResponse;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.imageio.ImageIO;
@@ -18,8 +19,10 @@ import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
@@ -56,12 +59,12 @@ public class ImageKitStorageService {
     private String urlEndpoint;
 
     private ImageKitClient client;
+    private final RestTemplate restTemplate = new RestTemplate();
 
     @PostConstruct
     public void init() {
         client = ImageKitOkHttpClient.builder()
                 .privateKey(privateKey)
-                .publicKey(publicKey)
                 .build();
         log.info("ImageKit client initialised — endpoint {}", urlEndpoint);
     }
@@ -96,13 +99,16 @@ public class ImageKitStorageService {
                     .build();
 
             FileUploadResponse response = client.files().upload(params);
-            String cdnUrl = response.url();
-            String fileId = response.fileId();
+            String cdnUrl = response.url().orElseThrow(() ->
+                    new BadRequestException("ImageKit upload succeeded but returned no URL"));
+            String fileId = response.fileId().orElse("");
 
             log.info("Uploaded image to ImageKit: {} (fileId={})", cdnUrl, fileId);
 
             // Encode the fileId into the URL fragment so delete() can recover it.
             return cdnUrl + "#ik=" + fileId;
+        } catch (BadRequestException ex) {
+            throw ex;
         } catch (IOException ex) {
             throw new BadRequestException("The image could not be uploaded to ImageKit");
         } catch (Exception ex) {
@@ -170,27 +176,35 @@ public class ImageKitStorageService {
      * New uploads go through {@link #hashOf} at upload time.
      */
     public String hashOfStored(String imageUrl) {
-        // For ImageKit URLs we cannot cheaply read the bytes; return null so the
-        // duplicate check falls through gracefully.
         return null;
     }
 
     /**
-     * Deletes the image from ImageKit's media library using the fileId encoded in the
-     * URL fragment. Silently succeeds if the URL has no embedded fileId (e.g. a legacy
-     * local-storage URL from before the migration).
+     * Deletes the image from ImageKit's media library using the REST API.
+     * Uses the fileId encoded in the URL fragment. Silently succeeds if the URL has
+     * no embedded fileId (e.g. a legacy local-storage URL from before the migration).
      */
     public void delete(String imageUrl) {
         String fileId = extractFileId(imageUrl);
-        if (fileId == null) {
+        if (fileId == null || fileId.isEmpty()) {
             log.warn("No ImageKit fileId found in URL, skipping delete: {}", imageUrl);
             return;
         }
         try {
-            client.files().delete(FileDeleteParams.builder()
-                    .fileId(fileId)
-                    .build());
-            log.info("Deleted image from ImageKit: fileId={}", fileId);
+            // ImageKit REST API: DELETE https://api.imagekit.io/v1/files/:fileId
+            // Auth: Basic base64(privateKey + ":")
+            String credentials = Base64.getEncoder().encodeToString(
+                    (privateKey + ":").getBytes(StandardCharsets.UTF_8));
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Authorization", "Basic " + credentials);
+
+            ResponseEntity<Void> resp = restTemplate.exchange(
+                    "https://api.imagekit.io/v1/files/" + fileId,
+                    HttpMethod.DELETE,
+                    new HttpEntity<>(headers),
+                    Void.class);
+
+            log.info("Deleted image from ImageKit: fileId={} (status={})", fileId, resp.getStatusCode());
         } catch (Exception ex) {
             // Log but don't fail — the DB record is authoritative.
             log.error("Failed to delete image from ImageKit (fileId={}): {}", fileId, ex.getMessage());
