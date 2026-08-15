@@ -23,7 +23,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.web.csrf.CsrfToken;
+// import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.*;
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -115,9 +115,11 @@ public class AuthController {
     }
 
     @GetMapping("/csrf")
-    public Map<String, String> csrf(CsrfToken token) {
-        return Map.of("token", token.getToken(), "headerName", token.getHeaderName());
-    }
+public Map<String, String> csrf() {
+    // CSRF is disabled for this stateless API; endpoint kept so the
+    // frontend's preflight call doesn't break.
+    return Map.of("token", "", "headerName", "X-XSRF-TOKEN");
+}
 
     @GetMapping("/me")
     public ResponseEntity<UserResponse> getCurrentUser(@AuthenticationPrincipal SecurityUser principal) {
