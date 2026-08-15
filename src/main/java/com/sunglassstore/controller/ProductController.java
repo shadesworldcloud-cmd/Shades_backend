@@ -5,7 +5,7 @@ import com.sunglassstore.dto.request.CreateProductRequest;
 import com.sunglassstore.dto.request.CreateVariantRequest;
 import com.sunglassstore.dto.response.ProductResponse;
 import com.sunglassstore.service.ProductService;
-import com.sunglassstore.service.LocalImageStorageService;
+import com.sunglassstore.service.ImageKitStorageService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -22,7 +22,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class ProductController {
 
     private final ProductService productService;
-    private final LocalImageStorageService imageStorageService;
+    private final ImageKitStorageService imageStorageService;
 
     @GetMapping
     public ResponseEntity<Page<ProductResponse>> getAllProducts(Pageable pageable) {

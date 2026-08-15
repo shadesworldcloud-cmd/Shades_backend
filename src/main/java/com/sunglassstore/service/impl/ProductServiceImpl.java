@@ -37,7 +37,7 @@ public class ProductServiceImpl implements ProductService {
     private final ProductImageRepository imageRepository;
     private final ProductAttributeRepository attributeRepository;
     private final CategoryRepository categoryRepository;
-    private final com.sunglassstore.service.LocalImageStorageService imageStorageService;
+    private final com.sunglassstore.service.ImageKitStorageService imageStorageService;
     private final InventoryService inventoryService;
     // Used by deleteProduct and deleteVariant, to clear the two NO ACTION references that would
     // otherwise make removing catalogue rows with history impossible.

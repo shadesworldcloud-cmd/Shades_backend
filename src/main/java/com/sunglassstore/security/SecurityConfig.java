@@ -73,7 +73,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/products/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/reviews/products/*").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/uploads/products/**").permitAll()
+                        // .requestMatchers(HttpMethod.GET, "/uploads/products/**").permitAll()
                         // Coupon validation for authenticated users
                         .requestMatchers("/api/coupons/**").authenticated()
                         // The automatic offer has to reach a signed-out visitor: the banner renders

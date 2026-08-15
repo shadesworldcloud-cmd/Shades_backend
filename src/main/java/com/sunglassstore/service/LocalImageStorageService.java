@@ -17,7 +17,6 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.Iterator;
 
-@Service
 public class LocalImageStorageService {
     private static final int MAX_DIMENSION = 8_000;
     private static final long MAX_PIXELS = 40_000_000L;

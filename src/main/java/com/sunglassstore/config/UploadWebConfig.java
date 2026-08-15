@@ -6,7 +6,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-@Configuration
 @RequiredArgsConstructor
 public class UploadWebConfig implements WebMvcConfigurer {
     private final LocalImageStorageService storageService;
