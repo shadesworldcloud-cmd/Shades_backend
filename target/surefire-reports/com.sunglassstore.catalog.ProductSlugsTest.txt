@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.sunglassstore.catalog.ProductSlugsTest
--------------------------------------------------------------------------------
-Tests run: 57, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.379 s -- in com.sunglassstore.catalog.ProductSlugsTest

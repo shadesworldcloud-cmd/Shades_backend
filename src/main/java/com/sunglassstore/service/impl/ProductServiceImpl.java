@@ -28,6 +28,7 @@ import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public class ProductServiceImpl implements ProductService {
 
     private static final Set<String> STOREFRONT_CATEGORIES = Set.of("Men", "Women", "Unisex", "Accessory");
@@ -38,6 +39,7 @@ public class ProductServiceImpl implements ProductService {
     private final ProductAttributeRepository attributeRepository;
     private final CategoryRepository categoryRepository;
     private final com.sunglassstore.service.ImageKitStorageService imageStorageService;
+    private final com.sunglassstore.service.StorefrontSettingsService storefrontSettingsService;
     private final InventoryService inventoryService;
     // Used by deleteProduct and deleteVariant, to clear the two NO ACTION references that would
     // otherwise make removing catalogue rows with history impossible.
@@ -87,6 +89,16 @@ public class ProductServiceImpl implements ProductService {
     @Transactional(readOnly = true)
     public java.util.List<com.sunglassstore.dto.response.BestSellerResponse> getBestSellers(int limit) {
         int capped = Math.min(Math.max(limit, 1), MAX_BEST_SELLERS);
+
+        // An administrator-curated order, if one exists, replaces the sales ranking outright — the
+        // whole point of curating is to decide the section rather than nudge it. An empty setting is
+        // the default and leaves everything below untouched, which is why the existing ranking
+        // behaviour (and the E2E suite that pins it down) is unaffected until someone curates.
+        java.util.List<Long> curated = storefrontSettingsService.getCuratedBestSellerIds();
+        if (!curated.isEmpty()) {
+            return curatedBestSellers(curated, capped);
+        }
+
         java.util.List<com.sunglassstore.catalog.BestSellerRow> ranked =
                 productRepository.findBestSellers(capped);
         if (ranked.isEmpty()) {
@@ -105,6 +117,63 @@ public class ProductServiceImpl implements ProductService {
                         row.getSoldQuantity() == null ? 0L : row.getSoldQuantity(),
                         row.getSoldRevenue()))
                 .toList();
+    }
+
+    /**
+     * The curated section: exactly the products the administrator pinned, in exactly their order.
+     *
+     * Inactive and deleted products are dropped rather than rendered. The curated order is a list of
+     * ids in a CONFIG row, so it carries no foreign key — a product unpublished or deleted after
+     * being pinned would otherwise surface as a broken card, or as a 404 the moment a shopper clicked
+     * it. Dropping silently is right here: the section is decoration, and failing it would take the
+     * home page down over a stale id.
+     *
+     * soldQuantity/soldRevenue are still reported so the response shape is identical to the ranked
+     * one and the storefront needs no branch, but they are the real sales figures for the pinned
+     * products, not invented ones — a curated product with no sales honestly reports zero.
+     */
+    private java.util.List<com.sunglassstore.dto.response.BestSellerResponse> curatedBestSellers(
+            java.util.List<Long> curatedIds, int limit) {
+        java.util.List<Long> wanted = curatedIds.stream().limit(limit).toList();
+        Map<Long, Product> byId = productRepository.findAllById(wanted).stream()
+                .filter(product -> Boolean.TRUE.equals(product.getIsActive()))
+                .collect(java.util.stream.Collectors.toMap(Product::getProductId, product -> product));
+        if (byId.isEmpty()) {
+            return java.util.List.of();
+        }
+        // One aggregate query for the pinned products' real sales, so the reported numbers stay
+        // truthful rather than being zeroed for everything.
+        //
+        // Its failure must not fail the section, though. findBestSellers is hand-written native SQL
+        // and the curated list does not depend on it for anything load-bearing — the administrator
+        // chose the products and their order, and the sales figure is decoration the storefront does
+        // not even print. An integration test caught this: the query compares IS_ACTIVE to the
+        // integer 1, which MySQL accepts and H2 refuses, so on H2 the whole curated section 500d
+        // over a number nobody reads. Degrading to zeros keeps the home page up.
+        Map<Long, com.sunglassstore.catalog.BestSellerRow> sales = salesFiguresOrEmpty();
+        return wanted.stream()
+                .filter(byId::containsKey)
+                .map(id -> {
+                    com.sunglassstore.catalog.BestSellerRow row = sales.get(id);
+                    long sold = row == null || row.getSoldQuantity() == null ? 0L : row.getSoldQuantity();
+                    return new com.sunglassstore.dto.response.BestSellerResponse(
+                            toResponse(byId.get(id)), sold, row == null ? null : row.getSoldRevenue());
+                })
+                .toList();
+    }
+
+    /** Sales figures keyed by product, or an empty map if the aggregate cannot be read. */
+    private Map<Long, com.sunglassstore.catalog.BestSellerRow> salesFiguresOrEmpty() {
+        try {
+            return productRepository.findBestSellers(MAX_BEST_SELLERS).stream()
+                    .collect(java.util.stream.Collectors.toMap(
+                            com.sunglassstore.catalog.BestSellerRow::getProductId, row -> row,
+                            (first, second) -> first));
+        } catch (RuntimeException aggregateUnavailable) {
+            log.warn("Best Sellers is curated, but the sales aggregate could not be read; "
+                    + "reporting zero units sold for the pinned products", aggregateUnavailable);
+            return Map.of();
+        }
     }
 
     @Override

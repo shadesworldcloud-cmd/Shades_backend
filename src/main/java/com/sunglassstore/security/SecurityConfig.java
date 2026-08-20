@@ -77,6 +77,11 @@ public class SecurityConfig {
                         // server-side cart, so its lines are priced from the request body. Both are
                         // reads — they return prices, never accept them. Every mutation lives under
                         // /admin below and is additionally gated by @PreAuthorize on the method.
+                        // The hero image is the first thing on the home page, so a signed-out
+                        // visitor has to be able to read it. GET only, and only this one path: the
+                        // writes live under /api/admin/storefront and are ADMIN-gated there and
+                        // again with @PreAuthorize on each method.
+                        .requestMatchers(HttpMethod.GET, "/api/storefront/settings").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/offers/automatic/active").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/offers/automatic/quote").permitAll()
                         .requestMatchers("/api/offers/automatic/admin/**").hasRole("ADMIN")

@@ -75,6 +75,19 @@ public class ImageKitStorageService {
      * that {@link #delete} can recover it later.
      */
     public String store(Long productId, Long variantId, MultipartFile file) {
+        String folder = "/products/" + productId
+                + (variantId == null ? "/product" : "/variants/" + variantId);
+        return storeInFolder(folder, file);
+    }
+
+    /**
+     * Uploads any image to an arbitrary ImageKit folder, with the identical validation pipeline.
+     *
+     * Extracted so the storefront hero image can reuse the content-type sniffing, the
+     * format-vs-header agreement check and the dimension ceiling rather than growing a second,
+     * inevitably weaker, upload path. {@link #store} is now a caller of this.
+     */
+    public String storeInFolder(String folder, MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BadRequestException("An image file is required");
         }
@@ -86,8 +99,6 @@ public class ImageKitStorageService {
 
         validateImageContent(file, contentType);
 
-        String folder = "/products/" + productId
-                + (variantId == null ? "/product" : "/variants/" + variantId);
         String filename = UUID.randomUUID() + extension;
 
         try {
