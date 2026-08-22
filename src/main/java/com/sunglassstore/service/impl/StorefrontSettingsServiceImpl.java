@@ -8,8 +8,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -38,6 +40,38 @@ public class StorefrontSettingsServiceImpl implements StorefrontSettingsService 
         // Blanked rather than deleted: the row records that this setting exists and when it last
         // changed, and an absent value and an empty value both mean "use the bundled default".
         write(HERO_IMAGE_KEY, "", "Home page hero image uploaded by an administrator");
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, String> getCollectionImageUrls() {
+        // LinkedHashMap so the order matches COLLECTIONS; the admin screen renders the rows in the
+        // order the map arrives and Men/Women/Unisex/Accessory is the order the storefront uses.
+        Map<String, String> urls = new LinkedHashMap<>();
+        for (String collection : StorefrontSettingsService.COLLECTIONS) {
+            String value = read(StorefrontSettingsService.collectionImageKey(collection));
+            if (value != null && !value.isBlank()) urls.put(collection, value.trim());
+        }
+        return urls;
+    }
+
+    @Override
+    @Transactional
+    public void setCollectionImageUrl(String collection, String url) {
+        String canonical = StorefrontSettingsService.requireCollection(collection);
+        write(StorefrontSettingsService.collectionImageKey(canonical), url,
+                "Photograph for the " + canonical + " collection, uploaded by an administrator");
+    }
+
+    @Override
+    @Transactional
+    public void clearCollectionImage(String collection) {
+        String canonical = StorefrontSettingsService.requireCollection(collection);
+        // Blanked rather than deleted, for the same reason as the hero image: the row records that
+        // the setting exists and when it last changed, and getCollectionImageUrls treats blank as
+        // absent so the storefront falls back to the bundled asset.
+        write(StorefrontSettingsService.collectionImageKey(canonical), "",
+                "Photograph for the " + canonical + " collection, uploaded by an administrator");
     }
 
     @Override

@@ -12,8 +12,10 @@ import org.springframework.web.bind.annotation.RestController;
  * Public read of the storefront's appearance settings.
  *
  * Public because the hero image is the first thing on the home page and must render for a signed-out
- * visitor — the same reasoning that makes the automatic-offer banner endpoint public. It is a read
- * that returns one URL and accepts nothing; every write lives under /api/admin/storefront.
+ * visitor — the same reasoning that makes the automatic-offer banner endpoint public. The collection
+ * photographs are on the same page and are read by the same visitors, so they ride along in the same
+ * response rather than needing a second public endpoint. It accepts nothing; every write lives under
+ * /api/admin/storefront.
  */
 @RestController
 @RequestMapping("/api/storefront")
@@ -24,6 +26,8 @@ public class StorefrontSettingsController {
 
     @GetMapping("/settings")
     public ResponseEntity<StorefrontSettingsResponse> getSettings() {
-        return ResponseEntity.ok(new StorefrontSettingsResponse(storefrontSettingsService.getHeroImageUrl()));
+        return ResponseEntity.ok(new StorefrontSettingsResponse(
+                storefrontSettingsService.getHeroImageUrl(),
+                storefrontSettingsService.getCollectionImageUrls()));
     }
 }

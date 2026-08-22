@@ -68,7 +68,9 @@ class OrderServiceImplTest {
         Order order = service.createOrder(7L, request(20L, null));
 
         assertEquals(new BigDecimal("240.00"), order.getSubtotalAmount());
-        assertEquals(new BigDecimal("332.20"), order.getTotalAmount());
+        // Tax-inclusive: the ₹240 of merchandise IS ₹240 to the customer (₹203.39 net + ₹36.61
+        // GST), plus ₹49 carriage below the free-shipping threshold. Additively this was ₹332.20.
+        assertEquals(new BigDecimal("289.00"), order.getTotalAmount());
         assertEquals(new BigDecimal("120.00"), order.getItems().getFirst().getUnitPrice());
         assertEquals(3, fixture.lockedVariant.getQuantityAvailable());
         assertSame(fixture.address, order.getShippingAddress());
@@ -105,7 +107,7 @@ class OrderServiceImplTest {
         when(couponService.calculateDiscount(coupon, new BigDecimal("240.00"), 2))
                 .thenReturn(new BigDecimal("50.00"));
         CreateOrderRequest request = request(20L, null); request.setCouponCode(" PAIR500 ");
-        request.setExpectedTotalAmount(new BigDecimal("273.20"));
+        request.setExpectedTotalAmount(new BigDecimal("239.00"));
 
         Order order = service.createOrder(7L, request);
 
@@ -122,7 +124,7 @@ class OrderServiceImplTest {
         OrderItem item = new OrderItem(); item.setVariant(fixture.lockedVariant); item.setQuantity(2);
         order.setItems(List.of(item));
         Payment payment = new Payment(); payment.setPaymentId(40L); payment.setOrder(order);
-        payment.setAmount(new BigDecimal("332.20")); payment.setPaymentStatus(PaymentStatus.PAID);
+        payment.setAmount(new BigDecimal("289.00")); payment.setPaymentStatus(PaymentStatus.PAID);
         when(orders.findByOrderIdAndUserUserIdForUpdate(30L, 7L)).thenReturn(Optional.of(order));
         when(payments.findByOrderOrderIdOrderByCreatedAtDesc(30L)).thenReturn(List.of(payment));
         when(payments.findByIdForUpdate(40L)).thenReturn(Optional.of(payment));
@@ -136,7 +138,7 @@ class OrderServiceImplTest {
         assertEquals(PaymentStatus.REFUNDED, payment.getPaymentStatus());
         assertEquals(7, fixture.lockedVariant.getQuantityAvailable());
         verify(refunds).save(argThat(refund -> refund.getReturnRequest() == null
-                && refund.getRefundAmount().compareTo(new BigDecimal("312.20")) == 0
+                && refund.getRefundAmount().compareTo(new BigDecimal("269.00")) == 0
                 && refund.getRefundStatus() == com.sunglassstore.entity.enums.RefundStatus.COMPLETED));
         verify(movements, times(1)).save(any());
         verify(events).publishEvent(any(com.sunglassstore.email.event.OrderCancelledEmailRequested.class));
@@ -209,7 +211,7 @@ class OrderServiceImplTest {
 
     private CreateOrderRequest request(Long shippingId, Long billingId) {
         CreateOrderRequest request = new CreateOrderRequest(); request.setShippingAddressId(shippingId);
-        request.setBillingAddressId(billingId); request.setExpectedTotalAmount(new BigDecimal("332.20")); return request;
+        request.setBillingAddressId(billingId); request.setExpectedTotalAmount(new BigDecimal("289.00")); return request;
     }
 
     private record Fixture(User user, Cart cart, ProductVariant lockedVariant, Address address) {}

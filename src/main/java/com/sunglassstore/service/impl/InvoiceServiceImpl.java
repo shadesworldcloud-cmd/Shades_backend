@@ -195,7 +195,18 @@ public class InvoiceServiceImpl implements InvoiceService {
 
         private void totals() throws IOException {
             ensure(170);
-            BigDecimal taxable = nvl(order.subtotalAmount()).subtract(nvl(order.discountAmount()));
+            // Derived from the total rather than recomputed from the subtotal, because this document
+            // has to be correct for orders priced under both regimes. Rows written before prices
+            // became tax-inclusive have total = (subtotal - discount) + tax + shipping, so their
+            // taxable IS subtotal - discount; rows written after have total = (subtotal - discount)
+            // + shipping with the tax already inside the merchandise, so their taxable is that
+            // figure MINUS tax. Subtracting shipping and tax from the total yields the right answer
+            // for both, and guarantees the GST summary foots to the net amount by construction —
+            // which the old formula would not do for a tax-inclusive order, overstating the taxable
+            // base by the whole tax and making the column add up to more than was charged.
+            BigDecimal taxable = nvl(order.totalAmount())
+                    .subtract(nvl(order.shippingAmount()))
+                    .subtract(nvl(order.taxAmount()));
             boolean intraState = safe(order.shippingAddress().state()).toLowerCase().contains("rajasthan");
             BigDecimal halfTax = nvl(order.taxAmount()).divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP);
             float summaryY = y;

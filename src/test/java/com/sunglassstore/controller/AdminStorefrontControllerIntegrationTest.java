@@ -22,6 +22,8 @@ import java.math.BigDecimal;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -245,6 +247,88 @@ class AdminStorefrontControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.heroImageUrl")
                         .value("https://ik.imagekit.io/swimgkit/storefront/hero/banner.png#ik=fileid"));
+    }
+
+    // ── feature 3: a photograph per collection ────────────────────────────────────────────────
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void uploadingACollectionPhotographMakesItTheOnePublicVisitorsGet() throws Exception {
+        when(imageStorageService.storeInFolder(eq("/storefront/collections/men"), any()))
+                .thenReturn("https://cdn.example/collections/men.jpg");
+
+        mockMvc.perform(multipart("/api/admin/storefront/collection-image/Men")
+                        .file(new MockMultipartFile("file", "men.jpg", MediaType.IMAGE_JPEG_VALUE, "x".getBytes())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.collectionImageUrls.Men").value("https://cdn.example/collections/men.jpg"));
+
+        // The public endpoint the storefront actually calls, anonymously.
+        mockMvc.perform(get("/api/storefront/settings"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.collectionImageUrls.Men").value("https://cdn.example/collections/men.jpg"))
+                // Untouched collections must be absent, not null-valued: the storefront reads a
+                // missing key as "use the bundled asset".
+                .andExpect(jsonPath("$.collectionImageUrls.Women").doesNotExist());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void aCollectionNameIsAcceptedInTheCasingTheStorefrontRoutesUse() throws Exception {
+        when(imageStorageService.storeInFolder(eq("/storefront/collections/accessory"), any()))
+                .thenReturn("https://cdn.example/collections/accessory.jpg");
+
+        // Lower case, as /collections/accessory would give it.
+        mockMvc.perform(multipart("/api/admin/storefront/collection-image/accessory")
+                        .file(new MockMultipartFile("file", "a.jpg", MediaType.IMAGE_JPEG_VALUE, "x".getBytes())))
+                .andExpect(status().isOk())
+                // Canonicalised on the way in, so the storefront can key off the category name.
+                .andExpect(jsonPath("$.collectionImageUrls.Accessory")
+                        .value("https://cdn.example/collections/accessory.jpg"));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void revertingACollectionDropsItFromTheSettingsRatherThanBlankingIt() throws Exception {
+        when(imageStorageService.storeInFolder(eq("/storefront/collections/unisex"), any()))
+                .thenReturn("https://cdn.example/collections/unisex.jpg");
+        mockMvc.perform(multipart("/api/admin/storefront/collection-image/Unisex")
+                        .file(new MockMultipartFile("file", "u.jpg", MediaType.IMAGE_JPEG_VALUE, "x".getBytes())))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/admin/storefront/collection-image/Unisex"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.collectionImageUrls.Unisex").doesNotExist());
+
+        mockMvc.perform(get("/api/storefront/settings"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.collectionImageUrls.Unisex").doesNotExist());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void anUnknownCollectionIsRejectedBeforeAnythingReachesTheCdn() throws Exception {
+        mockMvc.perform(multipart("/api/admin/storefront/collection-image/Polarized")
+                        .file(new MockMultipartFile("file", "p.jpg", MediaType.IMAGE_JPEG_VALUE, "x".getBytes())))
+                .andExpect(status().isBadRequest());
+
+        // The point of validating first: a rejected name must not leave an orphaned file on
+        // ImageKit that nothing references and nothing will clean up.
+        verify(imageStorageService, never()).storeInFolder(any(), any());
+    }
+
+    @Test
+    @WithMockUser(roles = "INVENTORY_MANAGER")
+    void aStockManagerCannotChangeACollectionPhotograph() throws Exception {
+        // Same belt-and-braces as the rest of this controller: SecurityConfig admits this role to
+        // /api/admin/**, and @PreAuthorize is what actually keeps it out of the shop window.
+        mockMvc.perform(delete("/api/admin/storefront/collection-image/Men"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void anonymousCannotChangeACollectionPhotograph() throws Exception {
+        mockMvc.perform(delete("/api/admin/storefront/collection-image/Men"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

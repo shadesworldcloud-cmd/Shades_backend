@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -70,6 +71,87 @@ class StorefrontSettingsServiceImplTest {
         // Empty means "hand the section back to the sales ranking", which the caller detects by the
         // list being empty — so the read must report empty, not the previous order.
         assertThat(service.getCuratedBestSellerIds()).isEmpty();
+    }
+
+    // ── collection photographs ───────────────────────────────────────────────────────────────
+
+    @Test
+    void aStoreWithNoUploadedCollectionPhotographsReportsNone() {
+        // Not an empty string per collection, and not nulls: absent, so the storefront's fallback
+        // to its bundled asset is a single missing-key check.
+        assertThat(service.getCollectionImageUrls()).isEmpty();
+    }
+
+    @Test
+    void aCollectionPhotographRoundTripsUnderItsCanonicalName() {
+        service.setCollectionImageUrl("Men", "https://cdn.example/men.jpg");
+
+        assertThat(service.getCollectionImageUrls())
+                .containsExactly(org.assertj.core.api.Assertions.entry("Men", "https://cdn.example/men.jpg"));
+    }
+
+    @Test
+    void collectionNamesAreAcceptedInAnyCasingAndStoredUnderOneKey() {
+        // The storefront routes are lower-case (/collections/men) while the category is "Men", so
+        // both spellings have to land on the same CONFIG row — otherwise an upload from one screen
+        // would be invisible to the other.
+        service.setCollectionImageUrl("men", "https://cdn.example/first.jpg");
+        service.setCollectionImageUrl("MEN", "https://cdn.example/second.jpg");
+
+        assertThat(service.getCollectionImageUrls())
+                .hasSize(1)
+                .containsEntry("Men", "https://cdn.example/second.jpg");
+    }
+
+    @Test
+    void revertingACollectionRemovesItRatherThanLeavingABlankUrl() {
+        service.setCollectionImageUrl("Women", "https://cdn.example/women.jpg");
+        service.clearCollectionImage("Women");
+
+        // Blank in CONFIG, absent from the map. A blank that reached the storefront would render
+        // url("") and lose the photograph entirely instead of falling back.
+        assertThat(service.getCollectionImageUrls()).doesNotContainKey("Women");
+        assertThat(service.getCollectionImageUrls()).isEmpty();
+    }
+
+    @Test
+    void allFourCollectionsAreIndependentAndKeepTheStorefrontOrder() {
+        service.setCollectionImageUrl("Accessory", "https://cdn.example/a.jpg");
+        service.setCollectionImageUrl("Men", "https://cdn.example/m.jpg");
+        service.setCollectionImageUrl("Unisex", "https://cdn.example/u.jpg");
+        service.setCollectionImageUrl("Women", "https://cdn.example/w.jpg");
+
+        // Insertion order was Accessory-first, but the map follows COLLECTIONS: the admin screen
+        // renders rows in the order it arrives and that must be the order shoppers see.
+        assertThat(service.getCollectionImageUrls().keySet())
+                .containsExactly("Men", "Women", "Unisex", "Accessory");
+    }
+
+    @Test
+    void anUnknownCollectionIsRejectedRatherThanCreatingAConfigRow() {
+        // CONFIG is read on every home page load. Accepting an arbitrary name would let a caller
+        // grow that table without limit, so this must throw rather than quietly store.
+        assertThatThrownBy(() -> service.setCollectionImageUrl("Sunglasses", "https://cdn.example/x.jpg"))
+                .isInstanceOf(com.sunglassstore.exception.BadRequestException.class)
+                .hasMessageContaining("Unknown collection");
+        assertThatThrownBy(() -> service.clearCollectionImage(""))
+                .isInstanceOf(com.sunglassstore.exception.BadRequestException.class);
+
+        assertThat(service.getCollectionImageUrls()).isEmpty();
+    }
+
+    @Test
+    void aCollectionPhotographDoesNotDisturbTheHeroImageOrTheCuration() {
+        service.setHeroImageUrl("https://cdn.example/banner.jpg");
+        service.setCuratedBestSellerIds(List.of(7L, 9L));
+
+        service.setCollectionImageUrl("Unisex", "https://cdn.example/u.jpg");
+
+        // Separate CONFIG rows, so one setting cannot overwrite another. Worth pinning because all
+        // three go through the same write() helper.
+        assertThat(service.getHeroImageUrl()).isEqualTo("https://cdn.example/banner.jpg");
+        assertThat(service.getCuratedBestSellerIds()).containsExactly(7L, 9L);
+        assertThat(service.getCollectionImageUrls()).containsEntry("Unisex", "https://cdn.example/u.jpg");
     }
 
     @Test

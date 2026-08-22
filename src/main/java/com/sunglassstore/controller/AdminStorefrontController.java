@@ -17,10 +17,11 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
- * Administrator control of the home page: which products are Best Sellers and in what order, and
- * the hero image.
+ * Administrator control of the home page: which products are Best Sellers and in what order, the
+ * hero image, and the photograph on each collection card.
  *
  * ADMIN-gated twice, deliberately. SecurityConfig lets ADMIN, SUPPORT and INVENTORY_MANAGER reach
  * /api/admin/**, which is wider than these endpoints should allow — changing the shop window is not
@@ -78,7 +79,7 @@ public class AdminStorefrontController {
     public ResponseEntity<StorefrontSettingsResponse> uploadHeroImage(@RequestParam("file") MultipartFile file) {
         String url = imageStorageService.storeInFolder("/storefront/hero", file);
         storefrontSettingsService.setHeroImageUrl(url);
-        return ResponseEntity.ok(new StorefrontSettingsResponse(url));
+        return ResponseEntity.ok(settings());
     }
 
     /** Reverts the home page to the bundled hero image. */
@@ -86,6 +87,47 @@ public class AdminStorefrontController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<StorefrontSettingsResponse> resetHeroImage() {
         storefrontSettingsService.clearHeroImage();
-        return ResponseEntity.ok(new StorefrontSettingsResponse(null));
+        return ResponseEntity.ok(settings());
+    }
+
+    /**
+     * Replaces one collection's photograph — the picture on the Men / Women / Unisex / Accessory
+     * cards on the home page and on /collections.
+     *
+     * The collection name is canonicalised BEFORE the file reaches the CDN. Uploading first and
+     * validating afterwards would leave an orphaned image on ImageKit every time an administrator
+     * (or a mistyped client) named a collection that does not exist, with nothing referencing it and
+     * nothing to clean it up.
+     */
+    @PostMapping("/collection-image/{collection}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<StorefrontSettingsResponse> uploadCollectionImage(
+            @PathVariable String collection, @RequestParam("file") MultipartFile file) {
+        String canonical = StorefrontSettingsService.requireCollection(collection);
+        // A folder per collection: a flat /storefront/collections would make a replaced Men
+        // photograph indistinguishable from a Women one in the CDN listing.
+        String url = imageStorageService.storeInFolder(
+                "/storefront/collections/" + canonical.toLowerCase(Locale.ROOT), file);
+        storefrontSettingsService.setCollectionImageUrl(canonical, url);
+        return ResponseEntity.ok(settings());
+    }
+
+    /** Reverts one collection to its bundled photograph, or to its flat tone where there is none. */
+    @DeleteMapping("/collection-image/{collection}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<StorefrontSettingsResponse> resetCollectionImage(@PathVariable String collection) {
+        storefrontSettingsService.clearCollectionImage(collection);
+        return ResponseEntity.ok(settings());
+    }
+
+    /**
+     * The complete settings object, so an upload or a revert answers with the same shape the public
+     * read serves. Returning only the field just changed would make the admin screen track two
+     * sources of truth for one panel.
+     */
+    private StorefrontSettingsResponse settings() {
+        return new StorefrontSettingsResponse(
+                storefrontSettingsService.getHeroImageUrl(),
+                storefrontSettingsService.getCollectionImageUrls());
     }
 }
