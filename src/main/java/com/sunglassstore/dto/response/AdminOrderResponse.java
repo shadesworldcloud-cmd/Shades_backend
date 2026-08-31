@@ -39,7 +39,9 @@ public record AdminOrderResponse(
                         p.getProviderReference(), p.getCreatedAt(), p.getPaidAt())).toList(),
                 shipments.stream().map(s -> new ShipmentInfo(s.getShipmentId(), s.getShippingProvider(),
                         s.getTrackingNumber(), s.getShipmentStatus().name(), s.getShippedAt(),
-                        s.getExpectedDeliveryAt(), s.getDeliveredAt())).toList(),
+                        s.getExpectedDeliveryAt(), s.getDeliveredAt(),
+                        s.getShiprocketOrderId(), s.getShiprocketShipmentId(),
+                        s.getAwbCode(), s.getCourierName(), s.getLabelUrl())).toList(),
                 history.stream().map(h -> new History(h.getOldStatus(), h.getNewStatus(),
                         h.getNotes(), h.getChangedAt())).toList(),
                 appliedOffer(order),
@@ -70,7 +72,9 @@ public record AdminOrderResponse(
                               LocalDateTime paidAt) {}
     public record ShipmentInfo(Long shipmentId, String provider, String trackingNumber, String status,
                                LocalDateTime shippedAt, LocalDateTime expectedDeliveryAt,
-                               LocalDateTime deliveredAt) {}
+                               LocalDateTime deliveredAt,
+                               Long shiprocketOrderId, Long shiprocketShipmentId,
+                               String awbCode, String courierName, String labelUrl) {}
     public record History(String oldStatus, String newStatus, String notes, LocalDateTime changedAt) {}
 
     /** Frozen offer terms. Every field is a copy taken when the order was placed. */

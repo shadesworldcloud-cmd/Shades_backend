@@ -85,6 +85,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/offers/automatic/active").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/offers/automatic/quote").permitAll()
                         .requestMatchers("/api/offers/automatic/admin/**").hasRole("ADMIN")
+                        // Shiprocket webhook — unauthenticated, called by Shiprocket servers
+                        .requestMatchers("/api/webhooks/shiprocket").permitAll()
+                        // Shiprocket public serviceability check (pincode → delivery estimate)
+                        .requestMatchers(HttpMethod.GET, "/api/shiprocket/serviceability").permitAll()
                         // Admin endpoints
                         .requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "SUPPORT", "INVENTORY_MANAGER")
                         // Swagger/OpenAPI

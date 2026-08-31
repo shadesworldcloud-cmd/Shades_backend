@@ -30,6 +30,25 @@ public class Shipment {
     @Column(name = "TRACKING_NUMBER")
     private String trackingNumber;
 
+    // ---- Shiprocket integration fields ----
+
+    @Column(name = "SHIPROCKET_ORDER_ID")
+    private Long shiprocketOrderId;
+
+    @Column(name = "SHIPROCKET_SHIPMENT_ID")
+    private Long shiprocketShipmentId;
+
+    @Column(name = "AWB_CODE", length = 100)
+    private String awbCode;
+
+    @Column(name = "COURIER_NAME", length = 100)
+    private String courierName;
+
+    @Column(name = "LABEL_URL", length = 1000)
+    private String labelUrl;
+
+    // ---- End Shiprocket fields ----
+
     @Enumerated(EnumType.STRING)
     @Column(name = "SHIPMENT_STATUS", nullable = false, length = 30)
     private ShipmentStatus shipmentStatus = ShipmentStatus.PENDING;
