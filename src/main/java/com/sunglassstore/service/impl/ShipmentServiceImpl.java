@@ -146,6 +146,26 @@ public class ShipmentServiceImpl implements ShipmentService {
         shipment.setShiprocketShipmentId(srResponse.shipmentId());
         shipment.setShipmentStatus(ShipmentStatus.PENDING);
 
+        // Estimate delivery date from Shiprocket serviceability
+        try {
+            var serviceability = shiprocketClient.checkServiceability(
+                    "302004", order.getShippingPincode(), 0.3, false);
+            if (serviceability != null && serviceability.data() != null
+                    && serviceability.data().availableCourierCompanies() != null
+                    && !serviceability.data().availableCourierCompanies().isEmpty()) {
+                int minDays = serviceability.data().availableCourierCompanies().stream()
+                        .mapToInt(c -> c.estimatedDeliveryDays())
+                        .min().orElse(0);
+                if (minDays > 0) {
+                    shipment.setExpectedDeliveryAt(LocalDateTime.now().plusDays(minDays));
+                    log.info("Shiprocket estimated delivery: {} days for pincode {}",
+                            minDays, order.getShippingPincode());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch delivery estimate from Shiprocket: {}", e.getMessage());
+        }
+
         if (order.getOrderStatus() == OrderStatus.CONFIRMED) {
             orderService.updateOrderStatus(orderId, OrderStatus.PROCESSING, "Shiprocket shipment created");
         }
