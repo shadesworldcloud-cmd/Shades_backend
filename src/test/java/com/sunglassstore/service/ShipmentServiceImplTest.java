@@ -1,5 +1,6 @@
 package com.sunglassstore.service;
 
+import com.sunglassstore.config.ShiprocketConfig;
 import com.sunglassstore.dto.request.CreateShipmentRequest;
 import com.sunglassstore.email.event.ShipmentStatusEmailRequested;
 import com.sunglassstore.entity.Order;
@@ -26,6 +27,8 @@ class ShipmentServiceImplTest {
     private OrderRepository orders;
     private OrderService orderService;
     private ApplicationEventPublisher publisher;
+    private ShiprocketClient shiprocketClient;
+    private ShiprocketConfig shiprocketConfig;
     private ShipmentServiceImpl service;
 
     @BeforeEach
@@ -34,7 +37,9 @@ class ShipmentServiceImplTest {
         orders = mock(OrderRepository.class);
         orderService = mock(OrderService.class);
         publisher = mock(ApplicationEventPublisher.class);
-        service = new ShipmentServiceImpl(shipments, orders, orderService, publisher);
+        shiprocketClient = mock(ShiprocketClient.class);
+        shiprocketConfig = mock(ShiprocketConfig.class);
+        service = new ShipmentServiceImpl(shipments, orders, orderService, publisher, shiprocketClient, shiprocketConfig);
     }
 
     @Test
