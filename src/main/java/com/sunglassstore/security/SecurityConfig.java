@@ -87,6 +87,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/offers/automatic/admin/**").hasRole("ADMIN")
                         // Shiprocket webhook — unauthenticated, called by Shiprocket servers
                         .requestMatchers("/api/webhooks/shiprocket").permitAll()
+                        // PayU callbacks — unauthenticated, called by PayU servers / browser redirect
+                        .requestMatchers("/api/payments/payu/success", "/api/payments/payu/failure",
+                                "/api/payments/payu/webhook").permitAll()
                         // Shiprocket public serviceability check (pincode → delivery estimate)
                         .requestMatchers(HttpMethod.GET, "/api/shiprocket/serviceability").permitAll()
                         // Admin endpoints
