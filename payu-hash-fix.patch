@@ -1,0 +1,119 @@
+From 033eeb6a3ba3cb114a3455bd14104a1adff1d7f8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 19 Sep 2026 19:37:22 +0000
+Subject: [PATCH 1/2] Fix PayU hash calculation: remove extra pipe character
+
+The request hash in generatePaymentHash had 12 pipe characters between
+email and salt, but PayU expects exactly 11 (udf1-udf5 empty + 6 empty
+fields). This caused all payments to fail with "incorrectly calculated
+hash parameter."
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01YBvfw2TMEWuVb73cPNqZAi
+---
+ src/main/java/com/sunglassstore/service/PayUHashService.java | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/main/java/com/sunglassstore/service/PayUHashService.java b/src/main/java/com/sunglassstore/service/PayUHashService.java
+index 370cde8..39b0c34 100644
+--- a/src/main/java/com/sunglassstore/service/PayUHashService.java
++++ b/src/main/java/com/sunglassstore/service/PayUHashService.java
+@@ -32,7 +32,7 @@ public class PayUHashService {
+                 + productinfo + "|"
+                 + firstname + "|"
+                 + email + "|"
+-                + "||||||||||||"
++                + "|||||||||||"
+                 + payUConfig.getMerchantSalt();
+         return DigestUtils.sha512Hex(hashString);
+     }
+-- 
+2.43.0
+
+
+From b10ae777f4d4f0de534c74746b1b254177341292 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 19 Sep 2026 19:49:57 +0000
+Subject: [PATCH 2/2] Fix PayU hash: use String.join to get correct pipe count
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The previous pipe-counting approach had an off-by-one error — the
+"|" concatenated before the literal added an extra pipe, producing
+12 pipes between email and salt instead of the 11 that PayU expects.
+
+Rewrote both generatePaymentHash and verifyResponseHash using
+String.join with explicit empty-string fields so the pipe count
+is always correct (17 fields for request, 18 for response).
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01YBvfw2TMEWuVb73cPNqZAi
+---
+ .../service/PayUHashService.java              | 38 +++++++++----------
+ 1 file changed, 19 insertions(+), 19 deletions(-)
+
+diff --git a/src/main/java/com/sunglassstore/service/PayUHashService.java b/src/main/java/com/sunglassstore/service/PayUHashService.java
+index 39b0c34..d1d4064 100644
+--- a/src/main/java/com/sunglassstore/service/PayUHashService.java
++++ b/src/main/java/com/sunglassstore/service/PayUHashService.java
+@@ -22,37 +22,37 @@ public class PayUHashService {
+ 
+     /**
+      * Generate the hash for a payment initiation request.
++     *
++     * Formula (17 pipe-delimited fields):
++     * key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||salt
+      */
+     public String generatePaymentHash(String txnid, String amount, String productinfo,
+                                        String firstname, String email) {
+-        // key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||salt
+-        String hashString = payUConfig.getMerchantKey() + "|"
+-                + txnid + "|"
+-                + amount + "|"
+-                + productinfo + "|"
+-                + firstname + "|"
+-                + email + "|"
+-                + "|||||||||||"
+-                + payUConfig.getMerchantSalt();
++        String hashString = String.join("|",
++                payUConfig.getMerchantKey(),
++                txnid, amount, productinfo, firstname, email,
++                "", "", "", "", "",   // udf1–udf5 (unused)
++                "", "", "", "", "",   // 5 reserved empty fields
++                payUConfig.getMerchantSalt());
+         return DigestUtils.sha512Hex(hashString);
+     }
+ 
+     /**
+      * Verify the response hash sent back by PayU (reverse hash).
++     *
++     * Formula (18 pipe-delimited fields):
++     * salt|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
+      */
+     public boolean verifyResponseHash(String responseHash, String txnid, String amount,
+                                        String productinfo, String firstname, String email,
+                                        String status) {
+-        // salt|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
+-        String hashString = payUConfig.getMerchantSalt() + "|"
+-                + status + "|"
+-                + "|||||||||||"
+-                + email + "|"
+-                + firstname + "|"
+-                + productinfo + "|"
+-                + amount + "|"
+-                + txnid + "|"
+-                + payUConfig.getMerchantKey();
++        String hashString = String.join("|",
++                payUConfig.getMerchantSalt(),
++                status,
++                "", "", "", "", "",   // 5 reserved empty fields
++                "", "", "", "", "",   // udf5–udf1 (unused, reversed)
++                email, firstname, productinfo, amount, txnid,
++                payUConfig.getMerchantKey());
+         return DigestUtils.sha512Hex(hashString).equals(responseHash);
+     }
+ }
+-- 
+2.43.0
+

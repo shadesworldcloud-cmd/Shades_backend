@@ -1,0 +1,480 @@
+diff --git a/pom.xml b/pom.xml
+index 0eaa154..b302009 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -21,6 +21,7 @@
+     <properties>
+         <java.version>21</java.version>
+         <jjwt.version>0.12.7</jjwt.version>
++        <commons-codec.version>1.17.1</commons-codec.version>
+     </properties>
+ 
+     <dependencies>
+@@ -99,6 +100,13 @@
+             <scope>runtime</scope>
+         </dependency>
+ 
++        <!-- Apache Commons Codec (SHA-512 for PayU hash) -->
++        <dependency>
++            <groupId>commons-codec</groupId>
++            <artifactId>commons-codec</artifactId>
++            <version>${commons-codec.version}</version>
++        </dependency>
++
+         <!-- Lombok -->
+         <dependency>
+             <groupId>org.projectlombok</groupId>
+diff --git a/src/main/java/com/sunglassstore/config/PayUConfig.java b/src/main/java/com/sunglassstore/config/PayUConfig.java
+new file mode 100644
+index 0000000..60ceff4
+--- /dev/null
++++ b/src/main/java/com/sunglassstore/config/PayUConfig.java
+@@ -0,0 +1,28 @@
++package com.sunglassstore.config;
++
++import lombok.Getter;
++import lombok.Setter;
++import org.springframework.boot.context.properties.ConfigurationProperties;
++import org.springframework.context.annotation.Configuration;
++
++/**
++ * Holds PayU merchant credentials and endpoint configuration.
++ * Values are read from application.properties / environment variables prefixed with "payu.".
++ */
++@Configuration
++@ConfigurationProperties(prefix = "payu")
++@Getter
++@Setter
++public class PayUConfig {
++
++    private String merchantKey;
++    private String merchantSalt;
++    /** Base URL without trailing slash, e.g. https://test.payu.in */
++    private String baseUrl;
++    /** Frontend URL where PayU redirects after a successful payment */
++    private String successUrl;
++    /** Frontend URL where PayU redirects after a failed payment */
++    private String failureUrl;
++    /** Backend webhook URL for PayU server-to-server callbacks */
++    private String webhookUrl;
++}
+diff --git a/src/main/java/com/sunglassstore/controller/PayUController.java b/src/main/java/com/sunglassstore/controller/PayUController.java
+new file mode 100644
+index 0000000..cf38107
+--- /dev/null
++++ b/src/main/java/com/sunglassstore/controller/PayUController.java
+@@ -0,0 +1,231 @@
++package com.sunglassstore.controller;
++
++import com.sunglassstore.config.PayUConfig;
++import com.sunglassstore.dto.response.PayUInitiateResponse;
++import com.sunglassstore.entity.Order;
++import com.sunglassstore.entity.Payment;
++import com.sunglassstore.entity.enums.OrderStatus;
++import com.sunglassstore.entity.enums.PaymentStatus;
++import com.sunglassstore.exception.BadRequestException;
++import com.sunglassstore.exception.ResourceNotFoundException;
++import com.sunglassstore.notification.event.OrderPaymentConfirmed;
++import com.sunglassstore.repository.OrderRepository;
++import com.sunglassstore.repository.PaymentRepository;
++import com.sunglassstore.security.SecurityUser;
++import com.sunglassstore.service.OrderService;
++import com.sunglassstore.service.PayUHashService;
++import lombok.RequiredArgsConstructor;
++import lombok.extern.slf4j.Slf4j;
++import org.springframework.beans.factory.annotation.Value;
++import org.springframework.context.ApplicationEventPublisher;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.ResponseEntity;
++import org.springframework.security.core.annotation.AuthenticationPrincipal;
++import org.springframework.transaction.annotation.Transactional;
++import org.springframework.web.bind.annotation.*;
++
++import java.net.URI;
++import java.time.LocalDateTime;
++import java.util.Map;
++import java.util.Optional;
++
++/**
++ * Handles the PayU payment lifecycle:
++ *
++ *   1. POST /api/payments/payu/initiate/{orderId}  — authenticated, returns form data for redirect
++ *   2. POST /api/payments/payu/success              — PayU redirects browser here (surl)
++ *   3. POST /api/payments/payu/failure              — PayU redirects browser here (furl)
++ *   4. POST /api/payments/payu/webhook              — server-to-server confirmation (unauthenticated)
++ *
++ * surl / furl point to THIS controller (not the frontend) because PayU sends a
++ * form POST — the browser needs a server that can accept it, verify the hash,
++ * update the database, and only THEN redirect to the React frontend page.
++ */
++@RestController
++@RequestMapping("/api/payments/payu")
++@RequiredArgsConstructor
++@Slf4j
++public class PayUController {
++
++    private final PayUConfig payUConfig;
++    private final PayUHashService payUHashService;
++    private final OrderRepository orderRepository;
++    private final PaymentRepository paymentRepository;
++    private final OrderService orderService;
++    private final ApplicationEventPublisher eventPublisher;
++
++    @Value("${app.frontend-base-url}")
++    private String frontendBaseUrl;
++
++    // ── 1. Initiate: generate PayU form parameters ──────────────────────────
++
++    @PostMapping("/initiate/{orderId}")
++    public ResponseEntity<PayUInitiateResponse> initiatePayment(
++            @AuthenticationPrincipal SecurityUser principal,
++            @PathVariable Long orderId) {
++
++        Order order = orderRepository.findByOrderIdAndUserUserId(orderId, principal.getUserId())
++                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
++
++        if (order.getOrderStatus() != OrderStatus.PLACED) {
++            throw new BadRequestException("Payment can only be initiated for orders in PLACED status");
++        }
++
++        // Idempotent: if already paid, reject
++        Optional<Payment> existingPaid = paymentRepository
++                .findFirstByOrderOrderIdAndPaymentStatus(orderId, PaymentStatus.PAID);
++        if (existingPaid.isPresent()) {
++            throw new BadRequestException("This order has already been paid");
++        }
++
++        String txnid = "SW-" + orderId + "-" + System.currentTimeMillis();
++        String amount = order.getTotalAmount().toPlainString();
++        String productinfo = "Shades World Order #" + orderId;
++        String firstname = order.getUser().getName().split("\\s+")[0];
++        String email = order.getUser().getEmail();
++        String phone = order.getUser().getPhoneNumber() != null
++                ? order.getUser().getPhoneNumber() : "";
++
++        String hash = payUHashService.generatePaymentHash(
++                txnid, amount, productinfo, firstname, email);
++
++        // Create a PENDING payment record
++        Payment payment = new Payment();
++        payment.setOrder(order);
++        payment.setPaymentMethod("PAYU");
++        payment.setAmount(order.getTotalAmount());
++        payment.setPaymentProvider("PAYU");
++        payment.setProviderReference(txnid);
++        payment.setPaymentStatus(PaymentStatus.PENDING);
++        paymentRepository.save(payment);
++
++        PayUInitiateResponse response = PayUInitiateResponse.builder()
++                .action(payUConfig.getBaseUrl() + "/_payment")
++                .key(payUConfig.getMerchantKey())
++                .txnid(txnid)
++                .amount(amount)
++                .productinfo(productinfo)
++                .firstname(firstname)
++                .email(email)
++                .phone(phone)
++                .surl(payUConfig.getSuccessUrl())
++                .furl(payUConfig.getFailureUrl())
++                .hash(hash)
++                .build();
++
++        return ResponseEntity.ok(response);
++    }
++
++    // ── 2. Success redirect (browser lands here via PayU surl) ──────────────
++    //
++    // PayU form-POSTs to this endpoint. We verify the hash, update the payment,
++    // then 302-redirect the browser to the React frontend success page.
++
++    @PostMapping("/success")
++    @Transactional
++    public ResponseEntity<Void> handleSuccess(@RequestParam Map<String, String> params) {
++        log.info("PayU success callback received for txnid={}", params.get("txnid"));
++        CallbackResult result = processPayUCallback(params);
++
++        String redirectUrl = frontendBaseUrl + "/payment/success"
++                + "?orderId=" + result.orderId
++                + "&txnid=" + params.getOrDefault("txnid", "");
++
++        return ResponseEntity.status(HttpStatus.FOUND)
++                .location(URI.create(redirectUrl))
++                .build();
++    }
++
++    // ── 3. Failure redirect ─────────────────────────────────────────────────
++
++    @PostMapping("/failure")
++    @Transactional
++    public ResponseEntity<Void> handleFailure(@RequestParam Map<String, String> params) {
++        log.info("PayU failure callback received for txnid={}", params.get("txnid"));
++        CallbackResult result = processPayUCallback(params);
++
++        String redirectUrl = frontendBaseUrl + "/payment/failure"
++                + "?orderId=" + result.orderId
++                + "&reason=" + java.net.URLEncoder.encode(
++                        result.message, java.nio.charset.StandardCharsets.UTF_8);
++
++        return ResponseEntity.status(HttpStatus.FOUND)
++                .location(URI.create(redirectUrl))
++                .build();
++    }
++
++    // ── 4. Webhook (server-to-server, unauthenticated) ──────────────────────
++
++    @PostMapping("/webhook")
++    @Transactional
++    public ResponseEntity<String> handleWebhook(@RequestParam Map<String, String> params) {
++        log.info("PayU webhook received for txnid={}", params.get("txnid"));
++        processPayUCallback(params);
++        return ResponseEntity.ok("OK");
++    }
++
++    // ── Internal DTO for callback results ──────────────────────────────────
++
++    private record CallbackResult(boolean success, Long orderId, String message) {}
++
++    // ── Shared callback processing ──────────────────────────────────────────
++
++    private CallbackResult processPayUCallback(Map<String, String> params) {
++
++        String txnid = params.getOrDefault("txnid", "");
++        String amount = params.getOrDefault("amount", "");
++        String productinfo = params.getOrDefault("productinfo", "");
++        String firstname = params.getOrDefault("firstname", "");
++        String email = params.getOrDefault("email", "");
++        String status = params.getOrDefault("status", "");
++        String hash = params.getOrDefault("hash", "");
++        String mihpayid = params.getOrDefault("mihpayid", "");
++
++        // Verify hash
++        boolean hashValid = payUHashService.verifyResponseHash(
++                hash, txnid, amount, productinfo, firstname, email, status);
++
++        if (!hashValid) {
++            log.error("PayU hash verification failed for txnid={}", txnid);
++            return new CallbackResult(false, 0L, "Hash verification failed");
++        }
++
++        // Look up the pending payment by providerReference (txnid)
++        Payment payment = paymentRepository.findByProviderReference(txnid)
++                .orElse(null);
++
++        if (payment == null) {
++            log.warn("No payment found for txnid={}", txnid);
++            return new CallbackResult(false, 0L, "Payment record not found");
++        }
++
++        Long orderId = payment.getOrder().getOrderId();
++
++        // Already confirmed — idempotent
++        if (payment.getPaymentStatus() == PaymentStatus.PAID) {
++            return new CallbackResult(true, orderId, "Payment already confirmed");
++        }
++
++        if ("success".equalsIgnoreCase(status)) {
++            payment.setPaymentStatus(PaymentStatus.PAID);
++            payment.setPaidAt(LocalDateTime.now());
++            payment.setProviderReference(mihpayid + "|" + txnid);
++            paymentRepository.save(payment);
++
++            Order order = payment.getOrder();
++            orderService.updateOrderStatus(order.getOrderId(), OrderStatus.CONFIRMED, "PayU payment confirmed");
++            eventPublisher.publishEvent(new OrderPaymentConfirmed(
++                    order.getUser().getUserId(), order.getOrderId(),
++                    order.getUser().getName(), order.getTotalAmount()));
++
++            return new CallbackResult(true, orderId, "Payment confirmed");
++        } else {
++            payment.setPaymentStatus(PaymentStatus.FAILED);
++            paymentRepository.save(payment);
++
++            return new CallbackResult(false, orderId,
++                    "Payment failed: " + params.getOrDefault("error_Message", status));
++        }
++    }
++}
+diff --git a/src/main/java/com/sunglassstore/dto/response/PayUInitiateResponse.java b/src/main/java/com/sunglassstore/dto/response/PayUInitiateResponse.java
+new file mode 100644
+index 0000000..80c2abc
+--- /dev/null
++++ b/src/main/java/com/sunglassstore/dto/response/PayUInitiateResponse.java
+@@ -0,0 +1,24 @@
++package com.sunglassstore.dto.response;
++
++import lombok.Builder;
++import lombok.Getter;
++
++/**
++ * Returned to the frontend so it can build the PayU redirect form.
++ * Every field maps to a PayU _payment POST parameter.
++ */
++@Getter
++@Builder
++public class PayUInitiateResponse {
++    private String action;       // PayU _payment URL
++    private String key;
++    private String txnid;
++    private String amount;
++    private String productinfo;
++    private String firstname;
++    private String email;
++    private String phone;
++    private String surl;
++    private String furl;
++    private String hash;
++}
+diff --git a/src/main/java/com/sunglassstore/repository/PaymentRepository.java b/src/main/java/com/sunglassstore/repository/PaymentRepository.java
+index 621c115..5389d2d 100644
+--- a/src/main/java/com/sunglassstore/repository/PaymentRepository.java
++++ b/src/main/java/com/sunglassstore/repository/PaymentRepository.java
+@@ -23,4 +23,6 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
+     Optional<Payment> findFirstByOrderOrderIdAndPaymentStatus(Long orderId, PaymentStatus paymentStatus);
+     boolean existsByOrderOrderIdAndPaymentStatusIn(Long orderId, List<PaymentStatus> statuses);
+     List<Payment> findByOrderOrderIdOrderByCreatedAtDesc(Long orderId);
++
++    Optional<Payment> findByProviderReference(String providerReference);
+ }
+diff --git a/src/main/java/com/sunglassstore/security/SecurityConfig.java b/src/main/java/com/sunglassstore/security/SecurityConfig.java
+index 987139b..44e9da1 100644
+--- a/src/main/java/com/sunglassstore/security/SecurityConfig.java
++++ b/src/main/java/com/sunglassstore/security/SecurityConfig.java
+@@ -87,6 +87,9 @@ public class SecurityConfig {
+                         .requestMatchers("/api/offers/automatic/admin/**").hasRole("ADMIN")
+                         // Shiprocket webhook — unauthenticated, called by Shiprocket servers
+                         .requestMatchers("/api/webhooks/shiprocket").permitAll()
++                        // PayU callbacks — unauthenticated, called by PayU servers / browser redirect
++                        .requestMatchers("/api/payments/payu/success", "/api/payments/payu/failure",
++                                "/api/payments/payu/webhook").permitAll()
+                         // Shiprocket public serviceability check (pincode → delivery estimate)
+                         .requestMatchers(HttpMethod.GET, "/api/shiprocket/serviceability").permitAll()
+                         // Admin endpoints
+diff --git a/src/main/java/com/sunglassstore/service/PayUHashService.java b/src/main/java/com/sunglassstore/service/PayUHashService.java
+new file mode 100644
+index 0000000..370cde8
+--- /dev/null
++++ b/src/main/java/com/sunglassstore/service/PayUHashService.java
+@@ -0,0 +1,58 @@
++package com.sunglassstore.service;
++
++import com.sunglassstore.config.PayUConfig;
++import lombok.RequiredArgsConstructor;
++import org.apache.commons.codec.digest.DigestUtils;
++import org.springframework.stereotype.Service;
++
++/**
++ * Generates and verifies SHA-512 hashes for PayU payment requests and responses.
++ *
++ * Request hash:
++ *   sha512(key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||salt)
++ *
++ * Response (reverse) hash:
++ *   sha512(salt|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key)
++ */
++@Service
++@RequiredArgsConstructor
++public class PayUHashService {
++
++    private final PayUConfig payUConfig;
++
++    /**
++     * Generate the hash for a payment initiation request.
++     */
++    public String generatePaymentHash(String txnid, String amount, String productinfo,
++                                       String firstname, String email) {
++        // key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||salt
++        String hashString = payUConfig.getMerchantKey() + "|"
++                + txnid + "|"
++                + amount + "|"
++                + productinfo + "|"
++                + firstname + "|"
++                + email + "|"
++                + "||||||||||||"
++                + payUConfig.getMerchantSalt();
++        return DigestUtils.sha512Hex(hashString);
++    }
++
++    /**
++     * Verify the response hash sent back by PayU (reverse hash).
++     */
++    public boolean verifyResponseHash(String responseHash, String txnid, String amount,
++                                       String productinfo, String firstname, String email,
++                                       String status) {
++        // salt|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
++        String hashString = payUConfig.getMerchantSalt() + "|"
++                + status + "|"
++                + "|||||||||||"
++                + email + "|"
++                + firstname + "|"
++                + productinfo + "|"
++                + amount + "|"
++                + txnid + "|"
++                + payUConfig.getMerchantKey();
++        return DigestUtils.sha512Hex(hashString).equals(responseHash);
++    }
++}
+diff --git a/src/main/java/com/sunglassstore/service/impl/PayUPaymentProcessor.java b/src/main/java/com/sunglassstore/service/impl/PayUPaymentProcessor.java
+new file mode 100644
+index 0000000..0683046
+--- /dev/null
++++ b/src/main/java/com/sunglassstore/service/impl/PayUPaymentProcessor.java
+@@ -0,0 +1,32 @@
++package com.sunglassstore.service.impl;
++
++import com.sunglassstore.dto.response.PaymentResult;
++import com.sunglassstore.service.PaymentProcessor;
++import org.springframework.context.annotation.Primary;
++import org.springframework.stereotype.Component;
++
++import java.math.BigDecimal;
++
++/**
++ * PayU-aware payment processor.
++ *
++ * Unlike the mock, PayU payments are completed asynchronously via redirect/webhook.
++ * This processor returns a PENDING result — the payment is confirmed later when
++ * PayU calls back to the webhook or the user lands on the success URL.
++ *
++ * Marked @Primary so it replaces MockPaymentProcessor in the Spring context.
++ */
++@Component
++@Primary
++public class PayUPaymentProcessor implements PaymentProcessor {
++
++    /**
++     * For PayU, the actual charge happens on PayU's hosted page.
++     * This creates a PENDING payment record; the webhook confirms it.
++     */
++    @Override
++    public PaymentResult process(String paymentMethod, BigDecimal amount) {
++        // Return pending — the real confirmation comes from PayU's callback
++        return new PaymentResult(false, null, "Payment pending — awaiting PayU confirmation");
++    }
++}
+diff --git a/src/main/resources/application.properties b/src/main/resources/application.properties
+index cb3bece..d2027fb 100644
+--- a/src/main/resources/application.properties
++++ b/src/main/resources/application.properties
+@@ -154,4 +154,18 @@ shiprocket.base-url=${SHIPROCKET_BASE_URL:https://apiv2.shiprocket.in/v1/externa
+ shiprocket.email=${SHIPROCKET_EMAIL}
+ shiprocket.password=${SHIPROCKET_PASSWORD}
+ shiprocket.pickup-location=${SHIPROCKET_PICKUP_LOCATION:Primary}
+-shiprocket.webhook-secret=${SHIPROCKET_WEBHOOK_SECRET:}
+\ No newline at end of file
++shiprocket.webhook-secret=${SHIPROCKET_WEBHOOK_SECRET:}
++
++# -------------------------------------------------------
++# PayU Payment Gateway
++# -------------------------------------------------------
++# Test credentials (replace with production values in prod env vars):
++#   Test Key:  gtKFFx    Test Salt: eCwWELxi
++#   Test URL:  https://test.payu.in/_payment
++#   Prod URL:  https://secure.payu.in/_payment
++payu.merchant-key=${PAYU_MERCHANT_KEY:gtKFFx}
++payu.merchant-salt=${PAYU_MERCHANT_SALT:eCwWELxi}
++payu.base-url=${PAYU_BASE_URL:https://test.payu.in}
++payu.success-url=${PAYU_SUCCESS_URL:${app.public-base-url}/api/payments/payu/success}
++payu.failure-url=${PAYU_FAILURE_URL:${app.public-base-url}/api/payments/payu/failure}
++payu.webhook-url=${PAYU_WEBHOOK_URL:${app.public-base-url}/api/payments/payu/webhook}
+\ No newline at end of file

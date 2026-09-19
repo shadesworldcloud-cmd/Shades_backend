@@ -1,0 +1,32 @@
+From 033eeb6a3ba3cb114a3455bd14104a1adff1d7f8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 19 Sep 2026 19:37:22 +0000
+Subject: [PATCH] Fix PayU hash calculation: remove extra pipe character
+
+The request hash in generatePaymentHash had 12 pipe characters between
+email and salt, but PayU expects exactly 11 (udf1-udf5 empty + 6 empty
+fields). This caused all payments to fail with "incorrectly calculated
+hash parameter."
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01YBvfw2TMEWuVb73cPNqZAi
+---
+ src/main/java/com/sunglassstore/service/PayUHashService.java | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/main/java/com/sunglassstore/service/PayUHashService.java b/src/main/java/com/sunglassstore/service/PayUHashService.java
+index 370cde8..39b0c34 100644
+--- a/src/main/java/com/sunglassstore/service/PayUHashService.java
++++ b/src/main/java/com/sunglassstore/service/PayUHashService.java
+@@ -32,7 +32,7 @@ public class PayUHashService {
+                 + productinfo + "|"
+                 + firstname + "|"
+                 + email + "|"
+-                + "||||||||||||"
++                + "|||||||||||"
+                 + payUConfig.getMerchantSalt();
+         return DigestUtils.sha512Hex(hashString);
+     }
+-- 
+2.43.0
+
