@@ -61,6 +61,7 @@ public class PayUController {
     // ── 1. Initiate: generate PayU form parameters ──────────────────────────
 
     @PostMapping("/initiate/{orderId}")
+    @Transactional
     public ResponseEntity<PayUInitiateResponse> initiatePayment(
             @AuthenticationPrincipal SecurityUser principal,
             @PathVariable Long orderId) {
