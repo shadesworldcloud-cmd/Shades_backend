@@ -32,7 +32,7 @@ public class PayUHashService {
                 + productinfo + "|"
                 + firstname + "|"
                 + email + "|"
-                + "||||||||||||"
+                + "|||||||||||"
                 + payUConfig.getMerchantSalt();
         return DigestUtils.sha512Hex(hashString);
     }
