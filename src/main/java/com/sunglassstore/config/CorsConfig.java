@@ -26,7 +26,23 @@ public class CorsConfig {
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 
+        // PayU callbacks are browser-redirect form POSTs originating from PayU's domain,
+        // not AJAX calls from our frontend. They carry an Origin header (e.g. https://test.payu.in
+        // or https://secure.payu.in) that is never in our allowed-origins list. Blocking them on
+        // CORS is wrong — they are secured by PayU's hash, not by origin. A permissive CORS rule
+        // on these three paths lets the POST through; the hash check in PayUController is the
+        // real gate.
+        CorsConfiguration payuCallbackConfig = new CorsConfiguration();
+        payuCallbackConfig.setAllowedOrigins(List.of("*"));
+        payuCallbackConfig.setAllowedMethods(List.of("POST"));
+        payuCallbackConfig.setAllowedHeaders(List.of("*"));
+        // allowCredentials must be false when allowedOrigins contains "*"
+        payuCallbackConfig.setAllowCredentials(false);
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/payments/payu/success", payuCallbackConfig);
+        source.registerCorsConfiguration("/api/payments/payu/failure", payuCallbackConfig);
+        source.registerCorsConfiguration("/api/payments/payu/webhook", payuCallbackConfig);
         source.registerCorsConfiguration("/**", config);
         return source;
     }
