@@ -20,23 +20,23 @@ class DeliveryEstimateCalculatorTest {
     private static final LocalDate TODAY = LocalDate.of(2026, 11, 10);
 
     @Test
-    void rangeRunsFromFastestCourierToRecommendedCourierPlusDispatch() {
+    void singleDateIsTheRecommendedCourierPlusDispatch() {
         var response = response(2,
-                courier(1, "Xpressbees", "Nov 13, 2026", "3"),   // Fri
+                courier(1, "Xpressbees", "Nov 13, 2026", "3"),   // Fri (fastest)
                 courier(2, "Delhivery", "Nov 16, 2026", "6"));   // Mon (recommended)
 
         DeliveryEstimateResponse estimate = DeliveryEstimateCalculator.customerEstimate("560001", response, TODAY, 1);
 
         assertEquals(Boolean.TRUE, estimate.serviceable());
-        assertEquals(LocalDate.of(2026, 11, 14), estimate.earliestDate()); // Fri + 1 working day
-        assertEquals(LocalDate.of(2026, 11, 17), estimate.latestDate());   // Mon + 1 working day
-        assertEquals("Xpressbees", estimate.courierName());
+        assertEquals(LocalDate.of(2026, 11, 17), estimate.earliestDate()); // Mon + 1 working day
+        assertEquals(LocalDate.of(2026, 11, 17), estimate.latestDate());
+        assertEquals("Delhivery", estimate.courierName());
         assertEquals(2, estimate.courierCount());
         assertEquals(DeliveryEstimateResponse.SOURCE_SHIPROCKET, estimate.source());
     }
 
     @Test
-    void withoutRecommendationTheRangeIsTheFastestCourier() {
+    void withoutRecommendationTheDateIsTheFastestCourier() {
         var response = response(null,
                 courier(2, "Delhivery", "Nov 16, 2026", null),
                 courier(1, "Xpressbees", "Nov 13, 2026", null));
@@ -45,14 +45,28 @@ class DeliveryEstimateCalculatorTest {
 
         assertEquals(LocalDate.of(2026, 11, 13), estimate.earliestDate());
         assertEquals(LocalDate.of(2026, 11, 13), estimate.latestDate());
+        assertEquals("Xpressbees", estimate.courierName());
     }
 
     @Test
-    void recommendedCourierFasterThanFastestNeverInvertsTheRange() {
-        var response = response(1, courier(1, "A", "Nov 13, 2026", null), courier(2, "B", "Nov 12, 2026", null));
+    void recommendedCourierWithoutUsableDateFallsBackToFastest() {
+        var response = response(9,
+                courier(9, "Recommended", "", null),
+                courier(1, "A", "Nov 13, 2026", null),
+                courier(2, "B", "Nov 12, 2026", null));
         var estimate = DeliveryEstimateCalculator.customerEstimate("560001", response, TODAY, 0);
         assertEquals(LocalDate.of(2026, 11, 12), estimate.earliestDate());
-        assertEquals(LocalDate.of(2026, 11, 13), estimate.latestDate());
+        assertEquals(LocalDate.of(2026, 11, 12), estimate.latestDate());
+        assertEquals("B", estimate.courierName());
+    }
+
+    @Test
+    void recommendedCourierFasterThanOthersIsUsed() {
+        var response = response(2, courier(1, "A", "Nov 13, 2026", null), courier(2, "B", "Nov 12, 2026", null));
+        var estimate = DeliveryEstimateCalculator.customerEstimate("560001", response, TODAY, 0);
+        assertEquals(LocalDate.of(2026, 11, 12), estimate.earliestDate());
+        assertEquals(LocalDate.of(2026, 11, 12), estimate.latestDate());
+        assertEquals("B", estimate.courierName());
     }
 
     @Test

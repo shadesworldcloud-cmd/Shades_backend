@@ -80,9 +80,10 @@ public final class DeliveryEstimateCalculator {
     }
 
     /**
-     * The customer-facing range shown before purchase. The earliest date is the fastest courier;
-     * the latest is Shiprocket's recommended courier (which auto-assignment usually picks) or the
-     * earliest when there is no recommendation. Both are pushed out by the store's dispatch time,
+     * The customer-facing delivery date shown before purchase: a single date, from Shiprocket's
+     * recommended courier (the one auto-assignment usually picks), or the fastest courier when there
+     * is no usable recommendation. {@code earliestDate} and {@code latestDate} are the same day and
+     * {@code courierName} is that courier. The date is pushed out by the store's dispatch time,
      * because Shiprocket's dates assume a pickup today.
      */
     public static DeliveryEstimateResponse customerEstimate(String pincode,
@@ -100,14 +101,10 @@ public final class DeliveryEstimateCalculator {
             return new DeliveryEstimateResponse(pincode, true, fallback.earliestDate(), fallback.latestDate(),
                     null, courierCount, DeliveryEstimateResponse.SOURCE_FALLBACK);
         }
-        CourierEta fastest = etas.get(0);
-        LocalDate earliest = fastest.eta().toLocalDate();
-        LocalDate latest = shipmentEta(response, null, today).map(LocalDateTime::toLocalDate).orElse(earliest);
-        if (latest.isBefore(earliest)) latest = earliest;
-        return new DeliveryEstimateResponse(pincode, true,
-                ShiprocketDates.addWorkingDays(earliest, dispatchDays),
-                ShiprocketDates.addWorkingDays(latest, dispatchDays),
-                fastest.courierName(), courierCount, DeliveryEstimateResponse.SOURCE_SHIPROCKET);
+        CourierEta chosen = recommendedOrFastest(response, etas);
+        LocalDate date = ShiprocketDates.addWorkingDays(chosen.eta().toLocalDate(), dispatchDays);
+        return new DeliveryEstimateResponse(pincode, true, date, date,
+                chosen.courierName(), courierCount, DeliveryEstimateResponse.SOURCE_SHIPROCKET);
     }
 
     /** Standard 3–5 working-day window after dispatch, used when Shiprocket is unavailable. */
@@ -117,6 +114,17 @@ public final class DeliveryEstimateCalculator {
                 ShiprocketDates.addWorkingDays(dispatched, FALLBACK_MIN_WORKING_DAYS),
                 ShiprocketDates.addWorkingDays(dispatched, FALLBACK_MAX_WORKING_DAYS),
                 null, 0, DeliveryEstimateResponse.SOURCE_FALLBACK);
+    }
+
+    /** Shiprocket's recommended courier when it has a usable date, else the fastest. {@code etas} is non-empty. */
+    private static CourierEta recommendedOrFastest(ShiprocketServiceabilityResponse response, List<CourierEta> etas) {
+        Integer recommended = recommendedCourierId(response);
+        if (recommended != null) {
+            for (CourierEta eta : etas) {
+                if (eta.courierCompanyId() == recommended) return eta;
+            }
+        }
+        return etas.get(0);
     }
 
     private static Integer recommendedCourierId(ShiprocketServiceabilityResponse response) {
