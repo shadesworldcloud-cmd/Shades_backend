@@ -13,9 +13,11 @@ import com.sunglassstore.exception.ResourceNotFoundException;
 import com.sunglassstore.email.event.ShipmentStatusEmailRequested;
 import com.sunglassstore.repository.OrderRepository;
 import com.sunglassstore.repository.ShipmentRepository;
+import com.sunglassstore.service.DeliveryEstimateService;
 import com.sunglassstore.service.OrderService;
 import com.sunglassstore.service.ShiprocketClient;
 import com.sunglassstore.service.ShipmentService;
+import com.sunglassstore.shipping.ShiprocketDates;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +47,7 @@ public class ShipmentServiceImpl implements ShipmentService {
     private final ApplicationEventPublisher eventPublisher;
     private final ShiprocketClient shiprocketClient;
     private final ShiprocketConfig shiprocketConfig;
+    private final DeliveryEstimateService deliveryEstimateService;
 
     @Value("${invoice.product.hsn:90041000}")
     private String hsnCode;
@@ -146,25 +149,13 @@ public class ShipmentServiceImpl implements ShipmentService {
         shipment.setShiprocketShipmentId(srResponse.shipmentId());
         shipment.setShipmentStatus(ShipmentStatus.PENDING);
 
-        // Estimate delivery date from Shiprocket serviceability
-        try {
-            var serviceability = shiprocketClient.checkServiceability(
-                    "302004", order.getShippingPincode(), 0.3, false);
-            if (serviceability != null && serviceability.data() != null
-                    && serviceability.data().availableCourierCompanies() != null
-                    && !serviceability.data().availableCourierCompanies().isEmpty()) {
-                int minDays = serviceability.data().availableCourierCompanies().stream()
-                        .mapToInt(c -> c.estimatedDeliveryDays())
-                        .min().orElse(0);
-                if (minDays > 0) {
-                    shipment.setExpectedDeliveryAt(LocalDateTime.now().plusDays(minDays));
-                    log.info("Shiprocket estimated delivery: {} days for pincode {}",
-                            minDays, order.getShippingPincode());
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Could not fetch delivery estimate from Shiprocket: {}", e.getMessage());
-        }
+        // Expected delivery from Shiprocket's ETD for the courier it is likely to assign
+        // (recommended, else fastest). Refined to the actual courier once the AWB is assigned.
+        deliveryEstimateService.shipmentEta(order.getShippingPincode(), null).ifPresent(eta -> {
+            shipment.setExpectedDeliveryAt(eta);
+            log.info("Shiprocket expected delivery {} for order {} (pincode {})",
+                    eta, orderId, order.getShippingPincode());
+        });
 
         if (order.getOrderStatus() == OrderStatus.CONFIRMED) {
             orderService.updateOrderStatus(orderId, OrderStatus.PROCESSING, "Shiprocket shipment created");
@@ -196,6 +187,9 @@ public class ShipmentServiceImpl implements ShipmentService {
             shipment.setTrackingNumber(data.awbCode()); // AWB doubles as tracking number
             shipment.setShippingProvider(data.courierName());
             shipment.setShipmentStatus(ShipmentStatus.PACKED);
+            // Re-estimate with the courier that was actually assigned.
+            deliveryEstimateService.shipmentEta(shipment.getOrder().getShippingPincode(), data.courierCompanyId())
+                    .ifPresent(shipment::setExpectedDeliveryAt);
             shipmentRepository.save(shipment);
             log.info("AWB assigned: shipmentId={}, awb={}, courier={}",
                     shipmentId, data.awbCode(), data.courierName());
@@ -241,23 +235,37 @@ public class ShipmentServiceImpl implements ShipmentService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public ShiprocketTrackingResponse trackShipment(Long shipmentId) {
         Shipment shipment = shipmentRepository.findById(shipmentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Shipment not found"));
 
+        ShiprocketTrackingResponse tracking;
         if (shipment.getAwbCode() != null) {
-            return shiprocketClient.trackByAwb(shipment.getAwbCode());
+            tracking = shiprocketClient.trackByAwb(shipment.getAwbCode());
         } else if (shipment.getShiprocketShipmentId() != null) {
-            return shiprocketClient.trackByShipmentId(shipment.getShiprocketShipmentId());
+            tracking = shiprocketClient.trackByShipmentId(shipment.getShiprocketShipmentId());
+        } else {
+            throw new BadRequestException("No AWB or Shiprocket shipment ID available for tracking");
         }
 
-        throw new BadRequestException("No AWB or Shiprocket shipment ID available for tracking");
+        // Live tracking carries the courier's latest ETD — keep the stored date in step with it.
+        if (tracking != null && tracking.trackingData() != null
+                && applyCourierEtd(shipment, tracking.trackingData().etd())) {
+            shipmentRepository.save(shipment);
+        }
+        return tracking;
     }
 
     @Override
     @Transactional
     public void handleWebhook(String awbCode, String currentStatus) {
+        handleWebhook(awbCode, currentStatus, null);
+    }
+
+    @Override
+    @Transactional
+    public void handleWebhook(String awbCode, String currentStatus, String etd) {
         if (awbCode == null || awbCode.isBlank()) {
             log.warn("Shiprocket webhook: missing AWB code");
             return;
@@ -269,20 +277,28 @@ public class ShipmentServiceImpl implements ShipmentService {
             return;
         }
 
+        // The courier's revised ETD applies even when the status itself has not moved.
+        boolean etdChanged = applyCourierEtd(shipment, etd);
+
         ShipmentStatus mappedStatus = mapShiprocketStatus(currentStatus);
         if (mappedStatus == null) {
             log.info("Shiprocket webhook: unmapped status '{}' for AWB {}", currentStatus, awbCode);
+            if (etdChanged) shipmentRepository.save(shipment);
             return;
         }
 
         ShipmentStatus oldStatus = shipment.getShipmentStatus();
-        if (oldStatus == mappedStatus) return; // no change
+        if (oldStatus == mappedStatus) { // no status change
+            if (etdChanged) shipmentRepository.save(shipment);
+            return;
+        }
 
         // Only move forward in the lifecycle (allow FAILED/RETURNED from any state)
         if (mappedStatus != ShipmentStatus.FAILED && mappedStatus != ShipmentStatus.RETURNED) {
             if (oldStatus.ordinal() >= mappedStatus.ordinal()) {
                 log.info("Shiprocket webhook: ignoring backward transition {} -> {} for AWB {}",
                         oldStatus, mappedStatus, awbCode);
+                if (etdChanged) shipmentRepository.save(shipment);
                 return;
             }
         }
@@ -312,6 +328,24 @@ public class ShipmentServiceImpl implements ShipmentService {
     // =====================================================================
     // Private helpers
     // =====================================================================
+
+    /**
+     * Applies a courier-supplied ETD to a shipment that is still in transit.
+     * Returns true when the stored expected delivery date changed.
+     */
+    private boolean applyCourierEtd(Shipment shipment, String etd) {
+        if (shipment.getDeliveredAt() != null) return false;
+        ShipmentStatus status = shipment.getShipmentStatus();
+        if (status == ShipmentStatus.DELIVERED || status == ShipmentStatus.RETURNED) return false;
+        return ShiprocketDates.parseDateTime(etd)
+                .filter(eta -> !eta.equals(shipment.getExpectedDeliveryAt()))
+                .map(eta -> {
+                    shipment.setExpectedDeliveryAt(eta);
+                    log.info("Expected delivery for shipment {} updated to {}", shipment.getShipmentId(), eta);
+                    return true;
+                })
+                .orElse(false);
+    }
 
     private ShiprocketOrderRequest buildShiprocketRequest(Order order) {
         List<ShiprocketOrderRequest.Item> items = order.getItems().stream()

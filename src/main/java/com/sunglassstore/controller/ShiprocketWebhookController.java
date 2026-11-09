@@ -26,11 +26,11 @@ public class ShiprocketWebhookController {
 
     @PostMapping("/shiprocket")
     public ResponseEntity<Void> handleShiprocketWebhook(@RequestBody ShiprocketWebhookPayload payload) {
-        log.info("Shiprocket webhook received: awb={}, status={}, srOrderId={}",
-                payload.awb(), payload.currentStatus(), payload.srOrderId());
+        log.info("Shiprocket webhook received: awb={}, status={}, etd={}, srOrderId={}",
+                payload.awb(), payload.currentStatus(), payload.etd(), payload.srOrderId());
 
         try {
-            shipmentService.handleWebhook(payload.awb(), payload.currentStatus());
+            shipmentService.handleWebhook(payload.awb(), payload.currentStatus(), payload.etd());
         } catch (Exception e) {
             // Log but return 200 so Shiprocket doesn't retry indefinitely
             log.error("Error processing Shiprocket webhook for AWB {}: {}", payload.awb(), e.getMessage(), e);

@@ -4,7 +4,10 @@ import com.sunglassstore.config.ShiprocketConfig;
 import com.sunglassstore.dto.shiprocket.ShiprocketAwbResponse;
 import com.sunglassstore.dto.shiprocket.ShiprocketServiceabilityResponse;
 import com.sunglassstore.dto.shiprocket.ShiprocketTrackingResponse;
+import com.sunglassstore.dto.response.DeliveryEstimateResponse;
 import com.sunglassstore.dto.response.ShipmentResponse;
+import com.sunglassstore.exception.BadRequestException;
+import com.sunglassstore.service.DeliveryEstimateService;
 import com.sunglassstore.service.ShiprocketClient;
 import com.sunglassstore.service.ShipmentService;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +17,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Admin endpoints for Shiprocket operations and a public serviceability check.
@@ -26,6 +30,9 @@ public class ShiprocketController {
     private final ShipmentService shipmentService;
     private final ShiprocketClient shiprocketClient;
     private final ShiprocketConfig shiprocketConfig;
+    private final DeliveryEstimateService deliveryEstimateService;
+
+    private static final Pattern INDIAN_PINCODE = Pattern.compile("^[1-9][0-9]{5}$");
 
     // ---- Public: delivery serviceability check ----
 
@@ -33,7 +40,7 @@ public class ShiprocketController {
      * Checks whether delivery is possible to a given pincode, and returns
      * available couriers with rates and estimated delivery days.
      *
-     * Pickup pincode is derived from the configured pickup location (Jaipur).
+     * Pickup pincode comes from {@code shiprocket.pickup-pincode}.
      */
     @GetMapping("/serviceability")
     public ResponseEntity<ShiprocketServiceabilityResponse> checkServiceability(
@@ -41,10 +48,27 @@ public class ShiprocketController {
             @RequestParam(value = "weight", defaultValue = "0.3") double weight,
             @RequestParam(value = "cod", defaultValue = "false") boolean cod) {
 
-        // Use the store's pincode as pickup. Jaipur Raja Park = 302004
         ShiprocketServiceabilityResponse response = shiprocketClient.checkServiceability(
-                "302004", pincode, weight, cod);
+                deliveryEstimateService.pickupPincode(), requirePincode(pincode), weight, cod);
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Customer-facing expected delivery dates for a pincode, used by the product page and checkout.
+     * Always answers: when Shiprocket is unreachable the standard window is returned with
+     * {@code source=FALLBACK} and {@code serviceable=null}.
+     */
+    @GetMapping("/delivery-estimate")
+    public ResponseEntity<DeliveryEstimateResponse> deliveryEstimate(@RequestParam("pincode") String pincode) {
+        return ResponseEntity.ok(deliveryEstimateService.estimate(requirePincode(pincode)));
+    }
+
+    private static String requirePincode(String pincode) {
+        String cleaned = pincode == null ? "" : pincode.trim();
+        if (!INDIAN_PINCODE.matcher(cleaned).matches()) {
+            throw new BadRequestException("Enter a valid 6-digit Indian pincode");
+        }
+        return cleaned;
     }
 
     // ---- Admin: Shiprocket shipment management ----

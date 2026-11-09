@@ -16,5 +16,9 @@ public record ShiprocketConfig(
         String email,
         String password,
         String pickupLocation,
-        String webhookSecret
+        String webhookSecret,
+        /** Pincode of the pickup warehouse, used for serviceability / delivery estimates. */
+        String pickupPincode,
+        /** Working days the store needs to pack and hand over an order before courier pickup. */
+        Integer dispatchDays
 ) {}

@@ -92,6 +92,7 @@ public class SecurityConfig {
                                 "/api/payments/payu/webhook").permitAll()
                         // Shiprocket public serviceability check (pincode → delivery estimate)
                         .requestMatchers(HttpMethod.GET, "/api/shiprocket/serviceability").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/shiprocket/delivery-estimate").permitAll()
                         // Admin endpoints
                         .requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "SUPPORT", "INVENTORY_MANAGER")
                         // Swagger/OpenAPI

@@ -2,6 +2,8 @@ package com.sunglassstore.service;
 
 import com.sunglassstore.config.ShiprocketConfig;
 import com.sunglassstore.dto.request.CreateShipmentRequest;
+import com.sunglassstore.dto.shiprocket.ShiprocketAwbResponse;
+import com.sunglassstore.dto.shiprocket.ShiprocketTrackingResponse;
 import com.sunglassstore.email.event.ShipmentStatusEmailRequested;
 import com.sunglassstore.entity.Order;
 import com.sunglassstore.entity.Shipment;
@@ -29,6 +31,7 @@ class ShipmentServiceImplTest {
     private ApplicationEventPublisher publisher;
     private ShiprocketClient shiprocketClient;
     private ShiprocketConfig shiprocketConfig;
+    private DeliveryEstimateService deliveryEstimates;
     private ShipmentServiceImpl service;
 
     @BeforeEach
@@ -39,7 +42,9 @@ class ShipmentServiceImplTest {
         publisher = mock(ApplicationEventPublisher.class);
         shiprocketClient = mock(ShiprocketClient.class);
         shiprocketConfig = mock(ShiprocketConfig.class);
-        service = new ShipmentServiceImpl(shipments, orders, orderService, publisher, shiprocketClient, shiprocketConfig);
+        deliveryEstimates = mock(DeliveryEstimateService.class);
+        service = new ShipmentServiceImpl(shipments, orders, orderService, publisher, shiprocketClient,
+                shiprocketConfig, deliveryEstimates);
     }
 
     @Test
@@ -109,6 +114,122 @@ class ShipmentServiceImplTest {
         service.updateShipmentStatus(3L, ShipmentStatus.SHIPPED);
 
         verifyNoInteractions(orderService);
+    }
+
+    // ---- Expected delivery date (Shiprocket ETD) ----
+
+    @Test
+    void assigningAwbReEstimatesDeliveryWithTheAssignedCourier() {
+        Shipment shipment = shiprocketShipment(ShipmentStatus.PENDING);
+        shipment.setExpectedDeliveryAt(LocalDateTime.of(2026, 11, 13, 20, 0));
+        LocalDateTime courierEta = LocalDateTime.of(2026, 11, 16, 20, 0);
+        when(shipments.findById(3L)).thenReturn(Optional.of(shipment));
+        when(shiprocketClient.assignAwb(900L)).thenReturn(new ShiprocketAwbResponse(
+                new ShiprocketAwbResponse.AwbData(new ShiprocketAwbResponse.AwbData.AwbDetails("AWB1", 24, "Delhivery")), 1));
+        when(deliveryEstimates.shipmentEta("560001", 24)).thenReturn(Optional.of(courierEta));
+
+        service.assignAwb(3L);
+
+        assertEquals(courierEta, shipment.getExpectedDeliveryAt());
+        assertEquals(ShipmentStatus.PACKED, shipment.getShipmentStatus());
+        verify(deliveryEstimates).shipmentEta("560001", 24);
+        verify(shipments).save(shipment);
+    }
+
+    @Test
+    void assigningAwbKeepsExistingEstimateWhenShiprocketHasNoEta() {
+        Shipment shipment = shiprocketShipment(ShipmentStatus.PENDING);
+        LocalDateTime original = LocalDateTime.of(2026, 11, 13, 20, 0);
+        shipment.setExpectedDeliveryAt(original);
+        when(shipments.findById(3L)).thenReturn(Optional.of(shipment));
+        when(shiprocketClient.assignAwb(900L)).thenReturn(new ShiprocketAwbResponse(
+                new ShiprocketAwbResponse.AwbData(new ShiprocketAwbResponse.AwbData.AwbDetails("AWB1", 24, "Delhivery")), 1));
+        when(deliveryEstimates.shipmentEta(any(), any())).thenReturn(Optional.empty());
+
+        service.assignAwb(3L);
+
+        assertEquals(original, shipment.getExpectedDeliveryAt());
+    }
+
+    @Test
+    void webhookEtdUpdatesExpectedDeliveryEvenWithoutStatusChange() {
+        Shipment shipment = shiprocketShipment(ShipmentStatus.SHIPPED);
+        shipment.setAwbCode("AWB1");
+        shipment.setExpectedDeliveryAt(LocalDateTime.of(2026, 11, 13, 20, 0));
+        when(shipments.findByAwbCode("AWB1")).thenReturn(Optional.of(shipment));
+
+        service.handleWebhook("AWB1", "IN TRANSIT", "2026-11-15 18:30:00");
+
+        assertEquals(LocalDateTime.of(2026, 11, 15, 18, 30), shipment.getExpectedDeliveryAt());
+        verify(shipments).save(shipment);
+        verifyNoInteractions(publisher); // a revised date alone does not email the customer
+    }
+
+    @Test
+    void webhookStatusChangeCarriesTheRevisedEtdIntoTheCustomerEmail() {
+        Shipment shipment = shiprocketShipment(ShipmentStatus.PACKED);
+        shipment.setAwbCode("AWB1");
+        when(shipments.findByAwbCode("AWB1")).thenReturn(Optional.of(shipment));
+
+        service.handleWebhook("AWB1", "PICKED UP", "Nov 17, 2026");
+
+        assertEquals(LocalDateTime.of(2026, 11, 17, 20, 0), shipment.getExpectedDeliveryAt());
+        assertEquals(ShipmentStatus.SHIPPED, shipment.getShipmentStatus());
+        var event = org.mockito.ArgumentCaptor.forClass(ShipmentStatusEmailRequested.class);
+        verify(publisher).publishEvent(event.capture());
+        assertEquals(LocalDateTime.of(2026, 11, 17, 20, 0), event.getValue().expectedDeliveryAt());
+    }
+
+    @Test
+    void webhookIgnoresEtdOnceDelivered() {
+        Shipment shipment = shiprocketShipment(ShipmentStatus.DELIVERED);
+        shipment.setAwbCode("AWB1");
+        LocalDateTime original = LocalDateTime.of(2026, 11, 13, 20, 0);
+        shipment.setExpectedDeliveryAt(original);
+        shipment.setDeliveredAt(LocalDateTime.of(2026, 11, 12, 14, 0));
+        when(shipments.findByAwbCode("AWB1")).thenReturn(Optional.of(shipment));
+
+        service.handleWebhook("AWB1", "DELIVERED", "2026-11-20 18:00:00");
+
+        assertEquals(original, shipment.getExpectedDeliveryAt());
+        verify(shipments, never()).save(any());
+    }
+
+    @Test
+    void webhookWithBlankOrGarbageEtdLeavesEstimateUntouched() {
+        Shipment shipment = shiprocketShipment(ShipmentStatus.SHIPPED);
+        shipment.setAwbCode("AWB1");
+        LocalDateTime original = LocalDateTime.of(2026, 11, 13, 20, 0);
+        shipment.setExpectedDeliveryAt(original);
+        when(shipments.findByAwbCode("AWB1")).thenReturn(Optional.of(shipment));
+
+        service.handleWebhook("AWB1", "IN TRANSIT", "");
+        service.handleWebhook("AWB1", "IN TRANSIT", "not a date");
+        service.handleWebhook("AWB1", "IN TRANSIT");
+
+        assertEquals(original, shipment.getExpectedDeliveryAt());
+        verify(shipments, never()).save(any());
+    }
+
+    @Test
+    void liveTrackingRefreshesExpectedDelivery() {
+        Shipment shipment = shiprocketShipment(ShipmentStatus.SHIPPED);
+        shipment.setAwbCode("AWB1");
+        when(shipments.findById(3L)).thenReturn(Optional.of(shipment));
+        when(shiprocketClient.trackByAwb("AWB1")).thenReturn(new ShiprocketTrackingResponse(
+                new ShiprocketTrackingResponse.TrackingData(1, 6, null, null, null, "2026-11-18 20:00:00")));
+
+        service.trackShipment(3L);
+
+        assertEquals(LocalDateTime.of(2026, 11, 18, 20, 0), shipment.getExpectedDeliveryAt());
+        verify(shipments).save(shipment);
+    }
+
+    private Shipment shiprocketShipment(ShipmentStatus status) {
+        Shipment shipment = shipment(status);
+        shipment.setShiprocketShipmentId(900L);
+        shipment.getOrder().setShippingPincode("560001");
+        return shipment;
     }
 
     private CreateShipmentRequest request(String provider, String tracking) {

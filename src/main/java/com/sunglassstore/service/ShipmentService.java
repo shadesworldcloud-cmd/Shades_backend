@@ -34,4 +34,7 @@ public interface ShipmentService {
 
     /** Handle an incoming Shiprocket webhook status update. */
     void handleWebhook(String awbCode, String currentStatus);
+
+    /** Process a Shiprocket webhook, including the courier's revised ETD when present. */
+    void handleWebhook(String awbCode, String currentStatus, String etd);
 }
